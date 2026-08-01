@@ -17,6 +17,25 @@
  * el propio SDK usa.
  */
 
+/**
+ * ESTA LÍNEA ES LA MÁS IMPORTANTE DEL ARCHIVO. No se toca.
+ *
+ * En CSS, el orden de las capas lo fija la PRIMERA declaración que aparece en
+ * el documento. Como este CSS se inyecta antes que el de la app, es esta línea
+ * la que decide el orden para toda la página, no solo para el agente.
+ *
+ * Al principio aquí solo se declaraban `theme` y `utilities`. Resultado: el
+ * orden global quedó theme → utilities → base, con `base` al final. Y `base`
+ * es el preflight de Tailwind, que resetea bordes, márgenes y tipografías.
+ * O sea que el reset pasó a ganarle a TODAS las utilidades de la app que
+ * hospeda: Nexus entero se quedó cuadrado, en producción, por esta línea.
+ *
+ * Declarando el orden canónico completo, la página queda exactamente como
+ * estaba: es el mismo orden que emite cualquier proyecto con Tailwind, así
+ * que coincide y no se altera nada.
+ */
+@layer theme, base, components, utilities;
+
 @import "tailwindcss/theme.css" layer(theme);
 @import "tailwindcss/utilities.css" layer(utilities);
 
