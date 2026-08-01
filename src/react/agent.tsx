@@ -36,6 +36,14 @@ export interface HandeiaAgentProps {
   capabilityId: string
   /** Dónde vive Handeia. Un solo endpoint; el SDK no sabe qué hay detrás. */
   handeiaUrl?: string | undefined
+  /**
+   * Header `Authorization` para el turno, si el espacio lo tiene. La cookie
+   * de sesión de Handeia no cruza a un espacio en otro dominio (SameSite) —
+   * esto es lo que prueba identidad en su lugar. Se pide en cada turno, no se
+   * cachea, por si el token expira. Sin esto, el turno va solo con la cookie
+   * (funciona igual cuando el espacio SÍ comparte sitio con Handeia).
+   */
+  getAuthHeader?: (() => Promise<string | null | undefined> | string | null | undefined) | undefined
   /** Qué está viendo el usuario AHORA. Se pregunta cada turno, no se cachea. */
   getContext?: (() => AgentSpaceContext | Promise<AgentSpaceContext>) | undefined
   /** Las mismas acciones que declara el manifest. */
@@ -288,14 +296,23 @@ function Agente(props: HandeiaAgentProps) {
     let context: AgentSpaceContext | undefined
     try { context = await props.getContext?.() } catch { context = undefined }
 
+    // Espacio de terceros: si esto truena, el turno sigue solo con la cookie
+    // (el caso normal cuando SÍ comparte sitio con Handeia) en vez de romperse.
+    let authHeader: string | null = null
+    try { authHeader = (await props.getAuthHeader?.()) ?? null } catch { authHeader = null }
+
     let data: AgentTurnResponse & { ok?: boolean; error?: string }
     try {
       const res = await fetch(`${base}${RUTA_TURNO}`, {
         method: 'POST',
-        // La identidad va en la cookie de sesión de Handeia. El espacio nunca
-        // ve ni toca el token del usuario.
+        // La cookie de sesión de Handeia viaja igual cuando el espacio
+        // comparte sitio con Handeia. Para cuando no (dominio distinto,
+        // la cookie no cruza por SameSite), authHeader prueba identidad.
         credentials: 'include',
-        headers: { 'Content-Type': 'application/json; charset=utf-8' },
+        headers: {
+          'Content-Type': 'application/json; charset=utf-8',
+          ...(authHeader ? { Authorization: authHeader } : {}),
+        },
         body: JSON.stringify({
           protocol: AGENT_PROTOCOL_VERSION,
           capId: props.capabilityId,

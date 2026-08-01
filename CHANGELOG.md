@@ -5,6 +5,23 @@ Este paquete sigue [SemVer](https://semver.org/lang/es/).
 
 ---
 
+## [0.7.3] — 2026-08-01
+
+### Añadido — getAuthHeader, para cuando la cookie de sesión no cruza de sitio
+
+Un espacio en otro dominio que el de Handeia nunca podía autenticarse de
+verdad: `credentials: 'include'` no sirve de nada si la cookie de sesión es
+`SameSite=Lax` (el default recomendado, y el que usa Handeia) — el navegador
+simplemente no la manda en una petición cross-site. `getAuthHeader` le da al
+turno un `Authorization` explícito en su lugar, pedido fresco en cada turno
+(no se cachea, por si expira). Handeia decide qué hacer con ese header; el
+SDK no sabe ni le importa si es un JWT, qué firma, o quién lo verifica.
+
+Opcional y aditivo: sin él, el turno sigue yendo solo con la cookie — el
+camino que ya funcionaba para un espacio que sí comparte sitio con Handeia.
+
+---
+
 ## [0.7.2] — 2026-08-01
 
 ### Corregido — el blur aparecía para acciones que no necesitan texto
