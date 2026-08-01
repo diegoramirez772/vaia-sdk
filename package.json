@@ -1,6 +1,6 @@
 {
   "name": "@vaia-lab/sdk",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "VAIA SDK — platform integration for Gandia-7 and Handeia developers",
   "author": "VAIA <hello@vaia.dev>",
   "license": "MIT",
@@ -46,7 +46,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsup && chmod +x dist/cli.js",
+    "build": "node scripts/build-css.mjs && tsup && chmod +x dist/cli.js",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
     "test": "npm run build && node --test test/*.test.js",
@@ -71,11 +71,13 @@
     "institutional"
   ],
   "devDependencies": {
+    "@tailwindcss/cli": "^4.3.3",
     "@types/node": "^26.0.1",
     "@types/react": "^19.2.18",
     "lucide-react": "^1.28.0",
     "motion": "^12.43.0",
     "react": "^19.2.8",
+    "tailwindcss": "^4.3.3",
     "tsup": "^8.0.0",
     "typescript": "^5.4.0"
   },

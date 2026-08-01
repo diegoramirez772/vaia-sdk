@@ -14,6 +14,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { asegurarEstilos } from './estilos.js'
 import { motion, AnimatePresence } from 'motion/react'
 import { Sparkles, X } from 'lucide-react'
 import { InputBar, MODELS } from './input-bar.js'
@@ -121,6 +122,10 @@ export function HandeiaAgent(props: HandeiaAgentProps) {
   // alto VISIBLE (visualViewport), no innerHeight, que en móvil incluye lo que
   // tapan las barras — medir con él deja el campo debajo de lo que se ve.
   useEffect(() => {
+    // Antes de medir nada: sin los estilos puestos, el campo no tiene ni el
+    // tamaño que se va a medir.
+    asegurarEstilos()
+
     const medir = () => {
       const vv = window.visualViewport
       setVp({ w: vv?.width ?? window.innerWidth, h: vv?.height ?? window.innerHeight })

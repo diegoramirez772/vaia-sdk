@@ -1,0 +1,31 @@
+/**
+ * Los estilos del agente, compilados DENTRO del paquete.
+ *
+ * Por qué existe este archivo: Tailwind v4 no escanea node_modules. Un
+ * proyecto que instala el SDK compila su propio Tailwind mirando su propio
+ * código, así que las clases que solo usa el SDK no se generan nunca y el
+ * campo sale desnudo — una caja blanca diminuta. Fue exactamente lo que pasó
+ * en Nexus.
+ *
+ * Pedirle al que instala que añada un @source a su CSS lo arregla, pero le
+ * pasa el problema a él y solo sirve si usa Tailwind. Así que el CSS viaja
+ * dentro del paquete y el componente lo pone él mismo al montarse. Quien lo
+ * instala no configura nada.
+ *
+ * SIN preflight, a propósito: un SDK no tiene ningún derecho a reescribir los
+ * estilos base del proyecto que lo hospeda. Solo se generan las utilidades que
+ * el propio SDK usa.
+ */
+
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+
+/**
+ * Modo oscuro: cada proyecto lo marca a su manera y el SDK tiene que verse
+ * bien en todos. Handeia usa la clase `.dark`; Nexus usa `data-theme="dark"`.
+ * Se cubren las dos, en el elemento y en sus descendientes.
+ */
+@custom-variant dark (&:where(.dark, .dark *, [data-theme="dark"], [data-theme="dark"] *));
+
+/* Solo se mira el código del propio SDK: nada de lo que use el host entra. */
+@source "./";

@@ -31,17 +31,23 @@ import {
 function useTheme(): { resolvedTheme: "light" | "dark" } {
   const [resolvedTheme, setResolvedTheme] = useState<"light" | "dark">("light");
   useEffect(() => {
-    const leer = () =>
+    // Cada proyecto marca el tema a su manera y el campo tiene que verse bien
+    // en todos: Handeia usa la clase `.dark`, Nexus usa `data-theme="dark"`.
+    // Mirar solo la clase dejaba el campo en claro dentro de un Nexus oscuro.
+    const leer = () => {
+      const raiz = document.documentElement;
+      const claro = raiz.classList.contains("light") || raiz.getAttribute("data-theme") === "light";
+      const oscuro =
+        raiz.classList.contains("dark") || raiz.getAttribute("data-theme") === "dark";
       setResolvedTheme(
-        document.documentElement.classList.contains("dark") ||
-          (!document.documentElement.classList.contains("light") &&
-            window.matchMedia("(prefers-color-scheme: dark)").matches)
+        oscuro || (!claro && window.matchMedia("(prefers-color-scheme: dark)").matches)
           ? "dark"
           : "light",
       );
+    };
     leer();
     const obs = new MutationObserver(leer);
-    obs.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+    obs.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "data-theme"] });
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
     mq.addEventListener("change", leer);
     return () => { obs.disconnect(); mq.removeEventListener("change", leer); };
