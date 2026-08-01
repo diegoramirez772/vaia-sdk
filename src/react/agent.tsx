@@ -68,6 +68,7 @@ export function HandeiaAgent(props: HandeiaAgentProps) {
   const base = (props.handeiaUrl ?? HANDEIA_POR_DEFECTO).replace(/\/$/, '')
 
   const [montado, setMontado] = useState(false)
+  const [vp, setVp] = useState({ w: 0, h: 0 })
   const [fieldOpen, setFieldOpen] = useState(false)
   const [pos, setPos] = useState<{ x: number; y: number; openLeft: boolean; openAbove: boolean } | null>(null)
   const drag = useRef<{ startX: number; startY: number; origX: number; origY: number; moved: boolean } | null>(null)
@@ -115,18 +116,25 @@ export function HandeiaAgent(props: HandeiaAgentProps) {
     if (d && !d.moved) setFieldOpen(v => !v)   // fue clic, no arrastre
   }
 
-  // Solo corre en el navegador: es la señal de que ya se puede leer `window`.
-  useEffect(() => setMontado(true), [])
-
-  // Las barras del navegador aparecen y desaparecen: una posición válida deja
-  // de serlo sola.
+  // Las barras del navegador aparecen y desaparecen, y el teclado de móvil se
+  // come media pantalla: una posición válida deja de serlo sola. Se guarda el
+  // alto VISIBLE (visualViewport), no innerHeight, que en móvil incluye lo que
+  // tapan las barras — medir con él deja el campo debajo de lo que se ve.
   useEffect(() => {
-    const reacomodar = () => setPos(p => (p ? { ...p, ...acotar(p.x, p.y) } : p))
-    window.addEventListener('resize', reacomodar)
-    window.visualViewport?.addEventListener('resize', reacomodar)
+    const medir = () => {
+      const vv = window.visualViewport
+      setVp({ w: vv?.width ?? window.innerWidth, h: vv?.height ?? window.innerHeight })
+      setPos(p => (p ? { ...p, ...acotar(p.x, p.y) } : p))
+    }
+    medir()
+    setMontado(true)
+    window.addEventListener('resize', medir)
+    window.visualViewport?.addEventListener('resize', medir)
+    window.visualViewport?.addEventListener('scroll', medir)
     return () => {
-      window.removeEventListener('resize', reacomodar)
-      window.visualViewport?.removeEventListener('resize', reacomodar)
+      window.removeEventListener('resize', medir)
+      window.visualViewport?.removeEventListener('resize', medir)
+      window.visualViewport?.removeEventListener('scroll', medir)
     }
   }, [])
 
@@ -220,12 +228,45 @@ export function HandeiaAgent(props: HandeiaAgentProps) {
   // un overlay flotante no aporta al HTML inicial ni al buscador.
   if (!montado) return null
 
-  // ── Posición del campo, misma lógica que en Handeia ────────────────────────
-  const sinMover = !pos
-  const left = sinMover ? '50%' : pos!.openLeft ? pos!.x - FIELD_GAP : pos!.x + CIRCLE_SIZE + FIELD_GAP
-  const top = sinMover ? window.innerHeight - 20 : pos!.openAbove ? pos!.y - FIELD_GAP : pos!.y + CIRCLE_SIZE + FIELD_GAP
-  const tx = sinMover ? '-50%' : pos!.openLeft ? '-100%' : '0%'
-  const ty = sinMover ? '-100%' : pos!.openAbove ? '-100%' : '0%'
+  // ── Dónde cabe el campo ────────────────────────────────────────────────────
+  //
+  // Se calcula la caja REAL en píxeles y se acota a lo que se ve. Antes se
+  // elegía lado (izquierda/derecha del círculo) y se confiaba en que cupiera,
+  // con un `transform: translate(...)` para descolgarlo. Dos fallos:
+  //
+  //  1. framer-motion escribe `transform` para animar, así que pisaba el
+  //     translate del style. Con `left: 50%` y el `-50%` perdido, el campo
+  //     salía media pantalla a la derecha. Por eso se salía nada más abrirlo.
+  //  2. En móvil el campo mide casi el ancho entero, así que desplazarlo por
+  //     el círculo lo sacaba igual, hubiera translate o no.
+  //
+  // Ahora la posición son números y el transform queda libre para la animación.
+  const M = 8
+  const ancho = Math.min(560, Math.max(240, vp.w - M * 2))
+  const ALTO_MIN = 64   // lo que ocupa el campo cerrado; nunca se acota por debajo
+
+  let left: number
+  let top: number | undefined
+  let bottom: number | undefined
+
+  if (!pos) {
+    // Sin arrastrar: centrado abajo, justo encima del círculo de la esquina.
+    left = Math.round((vp.w - ancho) / 2)
+    bottom = 20
+  } else {
+    left = pos.openLeft ? pos.x - FIELD_GAP - ancho : pos.x + CIRCLE_SIZE + FIELD_GAP
+    left = Math.min(Math.max(left, M), Math.max(M, vp.w - ancho - M))
+
+    if (pos.openAbove) {
+      // Anclado por abajo: crece hacia arriba sin despegarse del círculo.
+      bottom = Math.min(Math.max(vp.h - pos.y + FIELD_GAP, M), Math.max(M, vp.h - ALTO_MIN - M))
+    } else {
+      top = Math.min(Math.max(pos.y + CIRCLE_SIZE + FIELD_GAP, M), Math.max(M, vp.h - ALTO_MIN - M))
+    }
+  }
+
+  // Una respuesta larga no puede empujar el campo fuera de la pantalla.
+  const maxAlto = Math.max(ALTO_MIN, vp.h - (top ?? bottom ?? 0) - M)
 
   return (
     <>
@@ -236,10 +277,16 @@ export function HandeiaAgent(props: HandeiaAgentProps) {
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.98, y: 4 }}
             transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-            style={{ position: 'fixed', left, top, transform: `translate(${tx}, ${ty})`, zIndex: 2147483000 }}
-            className="w-[min(560px,calc(100vw-32px))]"
+            style={{
+              position: 'fixed',
+              left,
+              ...(top !== undefined ? { top } : { bottom }),
+              width: ancho,
+              maxHeight: maxAlto,
+              zIndex: 2147483000,
+            }}
           >
-            <div className="relative">
+            <div className="relative flex flex-col justify-end" style={{ maxHeight: maxAlto }}>
               <button
                 onClick={() => { setFieldOpen(false); setEnviado(''); setRespuesta(''); setFase('idle') }}
                 aria-label="Cerrar"
@@ -257,7 +304,7 @@ export function HandeiaAgent(props: HandeiaAgentProps) {
                     key={enviado}
                     initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
                     transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-                    className="mb-4 flex flex-col items-center gap-2 text-center px-2"
+                    className="mb-4 flex flex-col items-center gap-2 text-center px-2 min-h-0 overflow-y-auto"
                   >
                     <p className="text-[11px] uppercase tracking-[0.15em] text-black/30 dark:text-white/55 truncate max-w-full">{enviado}</p>
                     <p className="text-[17px] text-black/85 dark:text-white/92 tracking-[-0.02em] leading-relaxed">{respuesta}</p>
