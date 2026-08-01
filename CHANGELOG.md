@@ -5,6 +5,44 @@ Este paquete sigue [SemVer](https://semver.org/lang/es/).
 
 ---
 
+## [0.7.0] — 2026-08-01
+
+### Añadido — el cursor de Handeia camina hasta la acción
+
+`HandeiaAgent` acepta `getActionTarget?: (name: string) => HTMLElement | null`.
+Si el espacio declara dónde vive una acción en su propio DOM, el cursor de
+Handeia camina de verdad hasta ahí (con `initial`/`animate` real, no un salto)
+antes de ejecutarla, y el campo muestra "Activando '...'…" mientras tanto —
+mismo lenguaje visual que usa Handeia al activar sus propios artefactos. Sin
+blur de por medio: si el agente va a actuar sobre la UI, lo único que debe
+verse pasar es el cursor.
+
+Puramente opcional: un espacio que no implementa `getActionTarget` no ve
+cambio ninguno, la acción se ejecuta directo como antes.
+
+### Corregido — el campo se veía sin el borde sutil de Handeia
+
+`input-bar.tsx` depende de `var(--field-border)`, pero el agente vive en un
+Shadow DOM aislado a propósito (para no romper los estilos de quien lo
+instala) y esa variable nunca se definía ahí dentro — el borde caía al valor
+inicial (`currentColor`) en vez del 9%/16% de opacidad real. Se define ahora
+en el propio `styles.css` del paquete, sin depender de nada externo.
+
+### Corregido — la respuesta se sentía pegada al campo
+
+Más separación entre la respuesta y el campo (antes casi sin aire). El límite
+de altura contra el borde de pantalla (`maxAlto`) sigue igual: no se cambió
+nada del clamping, solo el espacio visual.
+
+### Corregido — "modo voz" no hacía nada
+
+El botón de onda solo encendía el lienzo animado de fondo; el dictado real
+esperaba un segundo botón aparte (el micrófono), lo que se sentía como que
+el modo voz no respondía. Ahora encenderlo arranca a escuchar de una vez;
+apagarlo detiene el dictado en curso.
+
+---
+
 ### Añadido — las 7 piezas operativas
 
 `defineCapability({ pieces })` declara skills, herramientas, workflows,

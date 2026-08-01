@@ -73,5 +73,19 @@
   line-height: normal;
 }
 
+/**
+ * --field-border: la única variable CSS que el campo espera de fuera
+ * (input-bar.tsx, borderColor). Como el Shadow DOM no deja entrar nada del
+ * host, sin esto la variable no existe y el borde cae al valor inicial
+ * (currentColor) — se ve sólido/duro en vez del borde sutil de Handeia. Se
+ * define aquí igual que allá: 9% negro en claro, 16% blanco en oscuro.
+ */
+:host {
+  --field-border: rgba(0, 0, 0, 0.09);
+}
+:where(.dark, .dark *, [data-theme="dark"], [data-theme="dark"] *) {
+  --field-border: rgba(255, 255, 255, 0.16);
+}
+
 /* Solo se mira el código del propio SDK: nada de lo que use el host entra. */
 @source "./";

@@ -43,6 +43,14 @@ export interface HandeiaAgentProps {
   /** Ejecuta una acción. Solo llega lo que Handeia ya validó. */
   onAction?: ((name: string, args: Record<string, unknown>) =>
     Promise<AgentActionResult> | AgentActionResult) | undefined
+  /**
+   * Dónde vive en el DOM la acción `name`, si el espacio quiere que el
+   * cursor de Handeia camine hasta ahí antes de ejecutarla — el mismo
+   * lenguaje visual que usa Handeia al activar un artefacto propio. Sin
+   * esto, la acción se ejecuta directo, sin animación: degradar bien es
+   * mejor que obligar a cablear algo que el espacio todavía no tiene.
+   */
+  getActionTarget?: ((name: string) => HTMLElement | null | undefined) | undefined
   placeholder?: string | undefined
 }
 
@@ -97,10 +105,18 @@ function Agente(props: HandeiaAgentProps) {
 
   const [texto, setTexto] = useState('')
   const [model, setModel] = useState(MODELS[0]?.id ?? '')
-  const [fase, setFase] = useState<'idle' | 'thinking' | 'done'>('idle')
+  const [fase, setFase] = useState<'idle' | 'thinking' | 'acting' | 'done'>('idle')
   const [enviado, setEnviado] = useState('')
   const [respuesta, setRespuesta] = useState('')
   const historial = useRef<{ role: 'user' | 'agent'; text: string }[]>([])
+  const campoRef = useRef<HTMLDivElement>(null)
+
+  // Cursor caminando hasta la acción — mismo lenguaje que Handeia usa para
+  // activar sus propios artefactos. `key` fuerza un remount por caminata:
+  // así `initial`→`animate` de framer-motion siempre anima desde el punto de
+  // partida real, en vez de quedarse pegado en el destino de la vez anterior.
+  const [cursor, setCursor] = useState<{ x0: number; y0: number; x1: number; y1: number; key: number } | null>(null)
+  const [accionLabel, setAccionLabel] = useState('')
 
   // Voz. `voiceMode` enciende el lienzo animado del campo (el de Handeia);
   // `grabando` es el dictado en marcha.
@@ -194,6 +210,46 @@ function Agente(props: HandeiaAgentProps) {
   // escuchando sería lo peor que puede hacer un SDK.
   useEffect(() => () => { dictado.current?.abort(); if (recTimer.current) clearInterval(recTimer.current) }, [])
 
+  // ── El cursor caminando hasta la acción ─────────────────────────────────────
+  //
+  // Nunca con blur (ver `conBlur` más abajo): si el agente va a actuar sobre
+  // la UI del espacio, el fondo se queda nítido a propósito, para que lo único
+  // que se vea pasar sea el cursor caminando — igual que cuando Handeia activa
+  // uno de sus propios artefactos.
+  //
+  // `getActionTarget` es opcional: un espacio que todavía no lo implementa
+  // simplemente no ve caminar el cursor, la acción se ejecuta directo. Nunca
+  // es un error no tenerlo.
+  const caminarHastaAccion = useCallback((name: string, label: string): Promise<void> => {
+    return new Promise((resolve) => {
+      // getActionTarget es código de terceros: si truena (un selector mal
+      // escrito, lo que sea), la acción no se detiene por eso — se ejecuta
+      // directo, igual que si el espacio nunca hubiera declarado un target.
+      let el: HTMLElement | null | undefined
+      try {
+        el = props.getActionTarget?.(name)
+      } catch {
+        el = null
+      }
+      if (!el) { resolve(); return }
+      const destino = el.getBoundingClientRect()
+      const origen = campoRef.current?.getBoundingClientRect()
+      setAccionLabel(label)
+      setFase('acting')
+      setCursor({
+        x0: origen ? origen.left + origen.width / 2 : destino.left + destino.width / 2,
+        y0: origen ? origen.top + origen.height / 2 : destino.top + destino.height / 2,
+        x1: destino.left + destino.width / 2,
+        y1: destino.top + destino.height / 2,
+        key: Date.now(),
+      })
+      // Mismo tiempo que la transición del cursor (abajo) más una pausa breve
+      // ya llegado, para que "activar" se sienta como un paso propio y no
+      // como un corte a medio camino.
+      setTimeout(() => { setCursor(null); resolve() }, 750)
+    })
+  }, [props])
+
   // ── Un turno contra Handeia ────────────────────────────────────────────────
   const turno = useCallback(async (mensaje: string, actionResult?: AgentActionResult) => {
     let context: AgentSpaceContext | undefined
@@ -256,6 +312,9 @@ function Agente(props: HandeiaAgentProps) {
   }, [base, props])
 
   const ejecutar = useCallback(async (name: string, args: Record<string, unknown>, mensaje: string) => {
+    const declarada = props.actions?.find(a => a.name === name)
+    await caminarHastaAccion(name, declarada?.description ?? name)
+
     let r: AgentActionResult
     try {
       r = await props.onAction!(name, args)
@@ -264,7 +323,7 @@ function Agente(props: HandeiaAgentProps) {
     }
     setFase('thinking')
     await turno(mensaje, r)
-  }, [props, turno])
+  }, [props, turno, caminarHastaAccion])
 
   const enviar = useCallback(() => {
     const t = texto.trim()
@@ -351,6 +410,30 @@ function Agente(props: HandeiaAgentProps) {
         )}
       </AnimatePresence>
 
+      {/* El cursor de Handeia caminando hasta la acción — puntero estilo
+          Figma (flecha + avatar), mismas coordenadas reales del elemento que
+          declaró el espacio vía getActionTarget. Nunca con blur detrás: acá
+          lo único que debe verse pasar es el cursor. */}
+      {cursor && (
+        <motion.div
+          key={cursor.key}
+          initial={{ left: cursor.x0, top: cursor.y0, opacity: 0 }}
+          animate={{ left: cursor.x1, top: cursor.y1, opacity: 1 }}
+          transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
+          style={{ position: 'fixed', zIndex: 2147483001, pointerEvents: 'none' }}
+        >
+          <span className="absolute bottom-full left-2 mb-1.5 w-5 h-5 rounded-full flex items-center justify-center text-white dark:text-black bg-black dark:bg-white shadow-md ring-2 ring-white dark:ring-[#171717]">
+            <Sparkles className="w-2.5 h-2.5" strokeWidth={2.2} />
+          </span>
+          <svg width="22" height="26" viewBox="0 0 22 26" className="text-black dark:text-white" style={{ filter: 'drop-shadow(0 3px 6px rgba(0,0,0,0.35))' }}>
+            <path
+              d="M2 1.5L2 20.5L7 16.3L10 24L13.3 22.6L10.3 15.2L18 15.2L2 1.5Z"
+              fill="currentColor" className="stroke-white dark:stroke-[#171717]" strokeWidth="1.4" strokeLinejoin="round" strokeLinecap="round"
+            />
+          </svg>
+        </motion.div>
+      )}
+
       <AnimatePresence>
         {fieldOpen && (
           <motion.div
@@ -367,7 +450,7 @@ function Agente(props: HandeiaAgentProps) {
               zIndex: 2147483000,
             }}
           >
-            <div className="relative flex flex-col justify-end" style={{ maxHeight: maxAlto }}>
+            <div ref={campoRef} className="relative flex flex-col justify-end" style={{ maxHeight: maxAlto }}>
               <button
                 onClick={() => { setFieldOpen(false); setEnviado(''); setRespuesta(''); setFase('idle') }}
                 aria-label="Cerrar"
@@ -385,7 +468,7 @@ function Agente(props: HandeiaAgentProps) {
                     key={enviado}
                     initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
                     transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-                    className="mb-4 flex flex-col items-center gap-2 text-center px-2 min-h-0 overflow-y-auto"
+                    className="mb-7 flex flex-col items-center gap-2 text-center px-2 min-h-0 overflow-y-auto"
                   >
                     <p className="text-[11px] uppercase tracking-[0.15em] text-black/30 dark:text-white/55 truncate max-w-full">{enviado}</p>
                     <p className="text-[17px] text-black/85 dark:text-white/92 tracking-[-0.02em] leading-relaxed">{respuesta}</p>
@@ -415,6 +498,7 @@ function Agente(props: HandeiaAgentProps) {
                 onChange={setTexto}
                 onSend={enviar}
                 aiPhase={fase}
+                aiStatus={fase === 'acting' ? `Activando "${accionLabel}"…` : ''}
                 sentText={enviado}
                 placeholder={props.placeholder ?? 'Pregúntale a Handeia…'}
                 model={model}
@@ -424,9 +508,14 @@ function Agente(props: HandeiaAgentProps) {
                 // nada es peor que no tenerlo.
                 {...(hayDictado() ? {
                   voiceMode,
+                  // Encender modo voz ARRANCA a escuchar de una vez — antes
+                  // solo prendía el lienzo animado y el micrófono se quedaba
+                  // esperando un segundo clic aparte, que se sentía como que
+                  // "no hacía nada". Apagarlo para el dictado en curso.
                   onVoiceModeToggle: () => {
                     setVoiceMode(v => {
                       if (v) pararDictado()
+                      else empezarDictado()
                       return !v
                     })
                   },
