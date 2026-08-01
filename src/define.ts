@@ -29,6 +29,10 @@
  */
 
 import type { CapabilityConfig, EcoTarget, Risk, Surface } from './types.js'
+import { validateAgentSurface, AGENT_PROTOCOL_VERSION } from './agent.js'
+import { validatePieces } from './pieces.js'
+import type { AgentAction } from './agent.js'
+import type { PiecesConfig } from './pieces.js'
 
 export type { CapabilityConfig }
 
@@ -42,6 +46,15 @@ export interface VAIAManifest {
   level?: string | undefined
   sector: string
   surfaces: string[]
+  /** Superficie de agente: qué sabe hacer el espacio y por dónde preguntarle.
+   *  Se publica en el manifest para que el portal y Handeia lo conozcan sin
+   *  tener que abrir el código de nadie. */
+  agent?: {
+    protocol: number
+    actions: AgentAction[]
+    query_endpoint?: string | undefined
+  } | undefined
+  pieces?: PiecesConfig | undefined
   permissions: string[]
   risk: Risk
   has_own_auth: boolean
@@ -74,6 +87,26 @@ export function defineCapability(config: CapabilityConfig): CapabilityConfig {
     throw new Error(`[@vaia/sdk] defineCapability: 'surfaces' no puede estar vacío. Define al menos un surface con su endpoint.`)
   }
 
+  // El contrato de agente se valida aquí, al declarar, y no en producción: un
+  // contrato mal escrito debe reventar en el escritorio del desarrollador y no
+  // frente al usuario. Nombres repetidos, acciones sin descripción (el modelo
+  // no podría elegirlas) o que escriben sin permiso declarado no pasan.
+  // Las piezas se validan igual: la autoridad mal declarada debe reventar
+  // aquí y no cuando un agente esté a punto de gastar dinero de alguien.
+  if (config.pieces) {
+    const errores = validatePieces(config.pieces)
+    if (errores.length > 0) {
+      throw new Error(`[@vaia/sdk] defineCapability: piezas inválidas:\n  - ${errores.join('\n  - ')}`)
+    }
+  }
+
+  if (config.agent) {
+    const errores = validateAgentSurface(config.agent)
+    if (errores.length > 0) {
+      throw new Error(`[@vaia/sdk] defineCapability: superficie de agente inválida:\n  - ${errores.join('\n  - ')}`)
+    }
+  }
+
   return config
 }
 
@@ -91,6 +124,18 @@ export function toManifest(config: CapabilityConfig): VAIAManifest {
     level:            config.level,
     sector:           config.sector,
     surfaces,
+    // El agente viaja en el manifest para que el portal y Handeia sepan qué
+    // puede hacer este espacio sin abrir su código.
+    agent: config.agent
+      ? {
+          protocol:       AGENT_PROTOCOL_VERSION,
+          actions:        config.agent.actions ?? [],
+          query_endpoint: config.agent.queryEndpoint,
+        }
+      : undefined,
+    // Las piezas viajan al manifest: el portal necesita mostrar qué autoridad
+    // pide una capacidad ANTES de que alguien la instale.
+    pieces:           config.pieces,
     permissions:      config.permissions,
     risk:             config.risk,
     has_own_auth:     config.has_own_auth ?? false,

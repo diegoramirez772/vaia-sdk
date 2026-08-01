@@ -5,11 +5,22 @@
 
 const enc = new TextEncoder()
 
-function hexToBytes(hex: string): Uint8Array {
-  if (hex.length % 2 !== 0) throw new Error('Invalid hex string')
-  const bytes = new Uint8Array(hex.length / 2)
+/**
+ * Hex a bytes, ESTRICTO.
+ *
+ * Antes usaba parseInt, que ante basura devuelve NaN y dejaba un 0 en su
+ * lugar: una firma con caracteres inválidos se convertía en bytes silenciosos
+ * en vez de rechazarse. Se prefiere fallar a adivinar. El ArrayBuffer se crea
+ * explícito para que el tipo sea Uint8Array<ArrayBuffer> — Web Crypto no
+ * acepta buffers compartidos.
+ */
+function hexToBytes(hex: string): Uint8Array<ArrayBuffer> {
+  if (hex.length % 2 !== 0 || !/^[0-9a-fA-F]*$/.test(hex)) {
+    throw new Error('Invalid hex string')
+  }
+  const bytes = new Uint8Array(new ArrayBuffer(hex.length / 2))
   for (let i = 0; i < hex.length; i += 2) {
-    bytes[i / 2] = parseInt(hex.slice(i, i + 2), 16)
+    bytes[i / 2] = Number.parseInt(hex.slice(i, i + 2), 16)
   }
   return bytes
 }

@@ -27,9 +27,15 @@ export async function verify(request: Request, secret: string): Promise<HandeiaV
   const tsHeader  = headers.get('x-handeia-timestamp') ?? ''
   const callId    = headers.get('x-handeia-call-id')   ?? ''
 
-  if (headers.get(PROBE_HEADER) === '1') {
-    return { ctx: buildProbeCtx(callId), raw: rawBody }
-  }
+  // OJO: el probe NO salta la firma.
+  //
+  // Antes esta comprobación iba ANTES de validar el HMAC, así que cualquiera
+  // en internet podía mandar `x-handeia-probe: 1` y hacer correr el endpoint
+  // del desarrollador sin autenticar nada. Nadie manda probes sin firma —
+  // Gandia ya firma los suyos— así que exigirla no rompe a ningún consumidor
+  // y cierra el hueco. El probe sigue existiendo: solo que ahora hay que
+  // demostrar quién eres para pedirlo.
+  const esProbe = headers.get(PROBE_HEADER) === '1'
 
   if (!sigHeader || !tsHeader) {
     throw new VAIAError(
@@ -50,6 +56,11 @@ export async function verify(request: Request, secret: string): Promise<HandeiaV
 
   if (!valid) {
     throw new VAIAError('Firma HMAC inválida', 'HMAC_INVALID', 401)
+  }
+
+  // Firma válida: recién aquí se atiende el probe.
+  if (esProbe) {
+    return { ctx: buildProbeCtx(callId), raw: rawBody }
   }
 
   let body: unknown

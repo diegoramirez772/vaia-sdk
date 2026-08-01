@@ -34,10 +34,14 @@ export async function verify(request: Request, secret: string): Promise<VerifyRe
   const tsHeader   = headers.get('x-gandia-timestamp')  ?? ''
   const callId     = headers.get('x-gandia-call-id')    ?? ''
 
-  // Health probe from test-connection — no signature required
-  if (headers.get(PROBE_HEADER) === '1') {
-    return { ctx: buildProbeCtx(callId), raw: rawBody }
-  }
+  // OJO: el probe NO salta la firma.
+  //
+  // Antes esta comprobación iba ANTES de validar el HMAC, así que cualquiera
+  // en internet podía mandar `x-gandia-probe: 1` y hacer correr el endpoint
+  // del desarrollador sin autenticar nada. El portal ya firma sus probes de
+  // test-connection, así que exigir la firma no rompe a nadie y cierra el
+  // hueco. El probe sigue existiendo: solo que hay que demostrar quién eres.
+  const esProbe = headers.get(PROBE_HEADER) === '1'
 
   if (!sigHeader || !tsHeader) {
     throw new VAIAError(
@@ -61,6 +65,11 @@ export async function verify(request: Request, secret: string): Promise<VerifyRe
   const valid = await hmacVerify(secret, signedData, hexSig)
   if (!valid) {
     throw new VAIAError('Firma HMAC inválida', 'HMAC_INVALID', 401)
+  }
+
+  // Firma válida: recién aquí se atiende el probe.
+  if (esProbe) {
+    return { ctx: buildProbeCtx(callId), raw: rawBody }
   }
 
   // Parse body

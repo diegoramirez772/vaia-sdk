@@ -1,3 +1,6 @@
+import type { PiecesConfig } from './pieces.js'
+import type { AgentSurfaceConfig } from './agent.js'
+
 // ─── Core enums ───────────────────────────────────────────────────────────────
 
 export type PublishType = 'app' | 'ia' | 'skill' | 'eco'
@@ -21,7 +24,7 @@ export interface GandiaUser {
   email?: string | undefined
 }
 
-/** Context injected by GAIA on every invoke call to the developer's server. */
+/** Context injected by the platform on every invoke call to your server. */
 export interface GandiaContext {
   capability_id: string
   call_id: string
@@ -29,7 +32,7 @@ export interface GandiaContext {
   user: GandiaUser
   permissions: string[]
   trigger: 'user_query' | 'gaia_invoke' | 'event'
-  /** Surface HAIA wants to render — determines which respond.* to use. */
+  /** Surface the platform wants to render — determines which respond.* to use. */
   surface: Surface
   query?: string | undefined
 }
@@ -42,14 +45,14 @@ export interface HandeiaUser {
   name?: string | undefined
 }
 
-/** Context injected by HAIA on every invoke call to the developer's server. */
+/** Context injected by the platform on every invoke call to your server. */
 export interface HandeiaContext {
   capability_id: string
   call_id: string
   user: HandeiaUser
   permissions: string[]
   trigger: 'user_action' | 'haia_invoke' | 'schedule'
-  /** Surface HAIA wants to render. */
+  /** Surface the platform wants to render. */
   surface: Surface
   query?: string | undefined
 }
@@ -176,6 +179,16 @@ export interface CapabilityConfig {
   sector: string
   /** Which surfaces the capability can respond to, and their invoke endpoint. */
   surfaces: Partial<Record<Surface, SurfaceConfig>>
+  /**
+   * Superficie de AGENTE — el asistente de Handeia dentro de este espacio.
+   * El espacio declara qué sabe hacer; Handeia razona y decide. Ver agent.ts.
+   */
+  agent?: AgentSurfaceConfig | undefined
+  /**
+   * Las 7 piezas operativas: skills, herramientas, workflows, agentes,
+   * personalidades y modalidades. Con su autoridad y su evidencia. Ver pieces.ts.
+   */
+  pieces?: PiecesConfig | undefined
   permissions: string[]
   risk: Risk
   description?: string | undefined

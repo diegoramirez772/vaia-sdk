@@ -1,225 +1,181 @@
-# @vaia/sdk
+# @vaia-lab/sdk
 
-VAIA Platform Integration SDK — connect your app, agent, or skill to [Gandia-7](https://gandia7.com) and [Handeia](https://handeia.com).
+**Agents with declared authority.** Connect your app to [Gandia-7](https://gandia7.com) and [Handeia](https://handeia.com), and let an assistant operate inside it — without writing the AI, and without giving it more power than you meant to.
 
-Zero runtime dependencies · Works in Node 18+, Edge, Bun, Deno · TypeScript-first
-
----
-
-## Install
+Zero dependencies · Node 18+, Edge, Bun, Deno · TypeScript-first
 
 ```bash
-npm install @vaia/sdk
+npm i @vaia-lab/sdk
+npx vaia init
 ```
 
 ---
 
-## Quick start (Next.js — Gandia-7)
+## The problem it solves
+
+Most agent SDKs can say *"the agent may call this function."*
+
+None of them can say *"it may pay up to $500 on its own, above that it asks, and it may never delete."*
+
+That second sentence is the difference between a demo and something you let run on real data. Here it's mandatory: **a piece without declared authority does not compile.**
 
 ```ts
-// app/api/gandia/invoke/route.ts
-import { gandia, VAIAError } from '@vaia/sdk'
+tools: [{
+  name: 'pay_invoice',
+  description: 'Pays a pending invoice.',
+  permission: 'write:payments',
+  authority: {
+    level: 'autonoma',            // autonoma | requiere_aprobacion | prohibida
+    consequence: 'costosa',       // reversible | costosa | irreversible
+    maxAmount: 500,
+    currency: 'MXN',
+    rationale: 'Small recurring invoices. Anything larger gets human review.',
+  },
+}]
+```
 
-export const runtime = 'edge'
+### Rules you cannot opt out of
 
-export async function POST(req: Request) {
-  try {
-    const { ctx } = await gandia.verify(req, process.env.GANDIA_KEY_SECRET!)
-    gandia.require(ctx, 'read:students')
+| rule | why |
+|---|---|
+| **Irreversible is never autonomous** | Doesn't rely on the model behaving well — it relies on the config being **impossible to write** |
+| Autonomous spending needs **a cap and a currency** | A bare `500` means nothing, and guessing the currency is how money disappears |
+| No piece may **exceed its agent's ceiling** | Otherwise you declare a limited agent and slip it a tool that does what the agent can't |
+| A tool **without a permission** is rejected | No permission means no one to ask for consent, and no one to revoke it from |
 
-    const data = await myDb.getStudents(ctx.tenant.id)
+Validation happens **when you declare**, not in production. A bad contract breaks on your desk, not in front of your user.
 
-    return gandia.respond.surface(ctx.surface, {
-      card:  () => ({ title: 'Alumnos', value: data.length }),
-      table: () => ({ columns: ['nombre', 'riesgo'], rows: data }),
-      text:  () => `${data.length} alumnos en ${ctx.tenant.name}`,
-    })
-  } catch (err) {
-    if (err instanceof VAIAError) return gandia.respond.error(err.message, err.status)
-    throw err
-  }
+---
+
+## The agent inside your app
+
+You declare what you can do. The assistant reasons with that **plus what it knows about the user, which you never see**.
+
+```ts
+agent: {
+  actions: [
+    { name: 'filter_results', description: 'Narrows the visible list.',
+      params: [{ name: 'city', type: 'string', description: 'City to filter by.' }] },
+  ],
 }
 ```
 
----
-
-## API Reference
-
-### `gandia.verify(request, secret)`
-
-Verifies the HMAC-SHA256 signature on an incoming invoke call from Gandia-7.
-
-- Checks `X-Gandia-Signature`, `X-Gandia-Timestamp` (replay window ±5 min)
-- Returns `{ ctx: GandiaContext, raw: string }`
-- Throws `VAIAError` (status 401) if invalid
-
 ```ts
-const { ctx } = await gandia.verify(req, process.env.GANDIA_KEY_SECRET!)
-// ctx.tenant.id, ctx.tenant.name, ctx.tenant.sector
-// ctx.user.id, ctx.user.role
-// ctx.permissions  → ['read:students', 'read:grades']
-// ctx.surface      → 'card' | 'table' | 'text' | 'widget' | 'action' | 'data'
-// ctx.query        → user's original question (if trigger = 'user_query')
-```
-
-### `gandia.require(ctx, permission)`
-
-Throws `VAIAError` (403) if the context doesn't have the required permission.
-
-```ts
-gandia.require(ctx, 'write:alerts')           // single
-gandia.requireAll(ctx, 'read:students', 'read:grades')  // all
-const ok = gandia.can(ctx, 'read:health')     // boolean check
-```
-
-### `gandia.respond.surface(surface, handlers, opts?)`
-
-Multi-surface responder — GAIA tells you which surface it wants via `ctx.surface`.
-
-```ts
-return gandia.respond.surface(ctx.surface, {
-  card:  () => ({ title: 'Riesgo', value: 72, unit: '%', trend: 'up' }),
-  table: () => ({ columns: ['alumno', 'score'], rows }),
-  text:  () => `El riesgo promedio es 72%`,
-}, { audit: { data_sources: ['supabase:students'], records_accessed: 120 } })
-```
-
-Available surfaces: `card` · `table` · `text` · `widget` · `action` · `data`
-
-### `gandia.respond.*` — individual builders
-
-```ts
-gandia.respond.card({ title, value, unit, trend, subtitle, color })
-gandia.respond.table({ columns, rows, total })
-gandia.respond.text(content, { markdown: true })
-gandia.respond.widget({ url, height, width })
-gandia.respond.action({ type, label, params, confirm })
-gandia.respond.data(payload)
-gandia.respond.ok()
-gandia.respond.error(message, status, code?)
-```
-
-All return a `Response` (Web API standard). For Express/Fastify use `gandia.make.*` instead (returns plain JSON object).
-
-### `gandia.jwt.verify(token, secret)`
-
-Verifies a Gandia-7 iframe JWT (`gandia_token` URL param). Use in iframe entry routes to skip your own login.
-
-```ts
-// In your iframe entry route:
-const claims = await gandia.jwt.fromUrl(request.url, process.env.GANDIA_KEY_SECRET!)
-// claims.sub         → user_id
-// claims.tenant_id   → institution id
-// claims.email       → user email (if available)
-// claims.permissions → what the user can do
-```
-
----
-
-### `handeia.*`
-
-Same API as `gandia.*` but for Handeia (personal platform). No tenant — just the user.
-
-```ts
-const { ctx } = await handeia.verify(req, process.env.HANDEIA_KEY_SECRET!)
-// ctx.user.id, ctx.user.email
-// ctx.permissions, ctx.surface, ctx.query
-```
-
----
-
-### `defineCapability(config)`
-
-Declares your capability metadata in code. The Shazam engine reads this with 100% confidence — no manual confirmation needed in the Developer Portal.
-
-```ts
-// vaia.config.ts
-import { defineCapability } from '@vaia/sdk'
-
-export default defineCapability({
-  id: 'mx.monitor-riesgo-academico',  // reverse-domain
-  name: 'Monitor de Riesgo Académico',
-  version: '1.0.0',
-  target: 'gandia',           // 'gandia' | 'handeia' | 'both'
-  type: 'app',                // 'app' | 'ia' | 'skill' | 'eco'
-  level: 'artefacto',         // 'widget' | 'artefacto' | 'espacio'
-  sector: 'educacion',
-  surfaces: {
-    card:  { endpoint: '/api/gandia/invoke' },
-    table: { endpoint: '/api/gandia/invoke' },
-    text:  { endpoint: '/api/gandia/invoke' },
-  },
-  permissions: ['read:students', 'read:grades', 'write:alerts'],
-  risk: 'medium',
+mountAgent({
+  capabilityId: 'com.my-app',
+  getContext: () => ({ route: location.pathname, claims: { visible: 12 } }),
+  onAction: async (name, args) => run(name, args),
 })
 ```
 
-Generate `gandia.manifest.json`:
+**Why the agent doesn't live in your app:** if it brought its own AI, it wouldn't know the user, it would start from zero every session, and — most importantly — **it could never disagree with itself**. This way, if your app scores one option 90 and another 87, the assistant can still recommend the 87, because it knows something about the user your app has no business knowing.
 
-```bash
-# Compile vaia.config.ts first, then:
-npx vaia manifest
-
-# Validate existing manifest:
-npx vaia manifest --validate
-```
+**What it deliberately cannot do:** it may only request actions you declared. It doesn't improvise, doesn't touch the DOM, doesn't find workarounds. Anything that writes gets confirmed with the user first.
 
 ---
 
-## Error handling
+## Borrowed connectors
 
-All verification functions throw `VAIAError` on failure:
+Your app needs the user's GitHub or Drive. **You implement no OAuth, and you never receive their token.**
 
 ```ts
-import { VAIAError } from '@vaia/sdk'
-
-try {
-  const { ctx } = await gandia.verify(req, secret)
-  // ...
-} catch (err) {
-  if (err instanceof VAIAError) {
-    // err.message → human-readable message (Spanish)
-    // err.code    → machine-readable: 'HMAC_INVALID', 'JWT_EXPIRED', 'PERMISSION_DENIED', etc.
-    // err.status  → HTTP status: 401, 403, 400, 422
-    return gandia.respond.error(err.message, err.status, err.code)
-  }
-  throw err
-}
+agent: { needs: ['github', 'drive'] }
 ```
 
-### Error codes
+You request an operation, the platform runs it with the token it already holds, and hands you back a trimmed result.
 
-| Code | Status | When |
-|---|---|---|
-| `MISSING_AUTH_HEADERS` | 401 | X-Gandia-Signature or X-Gandia-Timestamp missing |
-| `TIMESTAMP_OUT_OF_RANGE` | 401 | Timestamp outside ±5 min window |
-| `HMAC_INVALID` | 401 | Signature doesn't match |
-| `BODY_PARSE_ERROR` | 400 | Body is not valid JSON |
-| `JWT_MALFORMED` | 401 | JWT doesn't have 3 parts |
-| `JWT_SIGNATURE_INVALID` | 401 | JWT signature check failed |
-| `JWT_EXPIRED` | 401 | JWT exp claim is in the past |
-| `PERMISSION_DENIED` | 403 | Missing required permission |
-| `SURFACE_NOT_SUPPORTED` | 422 | No handler for requested surface |
+> If every app stored tokens, the attack surface would multiply by every developer who ships. One compromised app would hand over the GitHub and Drive of all its users. Borrowed, it only reaches what the user granted — rate-limited, audited, and revocable instantly.
+
+Read-only. Writing to an external service is never lent: that's what the service itself is for.
+
+---
+
+## MCP, wrapped
+
+MCP brings the catalog and the transport. This SDK brings the authority layer **MCP cannot express**.
+
+```ts
+const { tool, warnings } = fromMCPTool(mcpTool, authority, 'read:web')
+```
+
+**Importing something from the internet grants it nothing.** Authority is assigned separately, always. The server's own hints only ever produce warnings — *"it flags this as destructive but you declared it reversible"* — never decisions.
+
+Outbound, `toMCPTool()` **withholds anything requiring approval**: exposing it would offer an external agent something even you can't run unattended.
+
+---
+
+## Use it without our platform
+
+**Ten of the thirteen exports need no account, no network and no keys.** The authority layer is not tied to Gandia-7 or Handeia — it works with any LLM, any framework, any stack.
+
+```ts
+import { validatePieces, checkAuthority, fromMCPTool } from '@vaia-lab/sdk'
+
+// Validate your agent's tools at build time — with your own runtime
+const errors = validatePieces({ tools: myTools })
+if (errors.length) throw new Error(errors.join('\n'))
+
+// Gate a call before it happens, wherever your agent runs
+const ok = checkAuthority(tool.authority, { amount: 900, currency: 'MXN' })
+if (!ok.ok) return askHuman(ok.reason)
+```
+
+| works standalone | needs the platform |
+|---|---|
+| `defineCapability` · `toManifest` | `gandia.verify` · `handeia.jwt` |
+| `validatePieces` · `checkAuthority` · `requiresApproval` | `mountAgent` |
+| `validateAgentSurface` · `validateActionCall` | |
+| `fromMCPTool` · `toMCPTool` · `toMCPTools` | |
+
+Bring your own model. Bring your own orchestrator. Keep the guardrails.
+
+---
+
+## Identity, without a second login
+
+Your app opens from Gandia-7 or Handeia with the user's session already resolved.
+
+```ts
+const claims = await handeia.jwt.fromUrl(request.url, process.env.HANDEIA_KEY_SECRET!)
+```
+
+And to verify a call genuinely came from the platform:
+
+```ts
+const { ctx } = await gandia.verify(request, process.env.GANDIA_KEY_SECRET!)
+gandia.require(ctx, 'read:students')
+```
+
+Constant-time HMAC comparison, ±5 min window, and the health probe **requires a signature too**.
+
+---
+
+## The 7 pieces
+
+`skills` · `tools` · `workflows` · `agents` · `personalities` · `modalities` · `permissions`
+
+All declared, all validated, all carried in the manifest — so the portal can show **what authority a capability asks for before anyone installs it**.
 
 ---
 
 ## CLI
 
 ```bash
-npx vaia manifest            # generate gandia.manifest.json
-npx vaia manifest --validate # validate existing manifest
-npx vaia sign payload.json   # sign a payload (needs GANDIA_KEY_SECRET)
-npx vaia version             # SDK version
+npx vaia init       # drops a ready vaia.config.ts — no account, no keys, no network
+npx vaia manifest   # generates the manifest from your config
+npx vaia sign       # signs a payload for testing
 ```
 
 ---
 
-## Publishing
+## Security
 
-Publication to npm is done manually by the VAIA team via `npm login` + `npm publish`.
+See [SECURITY.md](./SECURITY.md) — what the SDK guarantees, and what's on you, such as deduplicating `call_id` if replay within the window matters to you.
 
----
+## Contributing
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md). What's open is **how to declare responsible agents**; the engines that run them are private.
 
 ## License
 
-MIT — VAIA
+MIT

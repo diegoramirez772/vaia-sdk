@@ -1,6 +1,5 @@
-#!/usr/bin/env node
 /**
- * @vaia/sdk CLI
+ * @vaia-lab/sdk CLI
  *
  * Usage:
  *   npx vaia manifest              → generates gandia.manifest.json from vaia.config.js
@@ -11,6 +10,7 @@
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { resolve, join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { createInterface } from 'node:readline'
 import { hmacSign } from './crypto.js'
 import { toManifest, defineCapability } from './define.js'
@@ -22,6 +22,8 @@ const cmd  = args[0]
 
 async function main() {
   switch (cmd) {
+    case 'init':     return cmdInit()
+    case 'doctor':   return cmdDoctor()
     case 'manifest': return cmdManifest()
     case 'sign':     return cmdSign()
     case 'version':
@@ -32,6 +34,160 @@ async function main() {
     default:
       printHelp()
   }
+}
+
+
+// ─── init ────────────────────────────────────────────────────────────────────
+
+/**
+ * `npx vaia init` — deja una capacidad declarada y lista en un archivo.
+ *
+ * Existe porque la primera experiencia decide si alguien se queda: si para ver
+ * algo hay que registrarse, leer documentación y pedir credenciales, la gente
+ * se va. Esto corre sin cuenta, sin claves y sin red — y lo que genera ya pasa
+ * la validación de autoridad, así que el ejemplo enseña la regla en vez de
+ * enseñar el atajo.
+ */
+async function cmdInit() {
+  const cwd  = process.cwd()
+  const out  = join(cwd, 'vaia.config.ts')
+
+  if (existsSync(out)) {
+    console.error('✗ Ya existe vaia.config.ts en esta carpeta.')
+    process.exit(1)
+  }
+
+  const plantilla = `import { defineCapability } from '@vaia-lab/sdk'
+
+/**
+ * Tu capacidad, declarada.
+ *
+ * Esto es la única fuente de verdad: el portal la lee y arma el manifest solo.
+ */
+export default defineCapability({
+  id: 'mx.mi-capacidad',
+  name: 'Mi capacidad',
+  version: '0.1.0',
+  target: 'handeia',       // 'gandia' | 'handeia' | 'both'
+  type: 'app',
+  sector: 'general',
+  description: 'Describe en una línea qué resuelve.',
+
+  surfaces: {
+    text: { endpoint: '/api/vaia/invoke' },
+  },
+
+  // ── Las piezas ────────────────────────────────────────────────────────────
+  // La autoridad NO es opcional: hay que decir hasta dónde puede llegar cada
+  // cosa. Lo irreversible nunca puede ser autónomo, y lo que gasta dinero
+  // necesita tope y moneda. Si te lo saltas, esto no compila.
+  pieces: {
+    tools: [
+      {
+        name: 'consultar_datos',
+        description: 'Lee datos del usuario para responder preguntas.',
+        permission: 'read:datos',
+        authority: {
+          level: 'autonoma',          // 'autonoma' | 'requiere_aprobacion' | 'prohibida'
+          consequence: 'reversible',  // 'reversible' | 'costosa' | 'irreversible'
+          rationale: 'Solo lee. No cambia nada del usuario.',
+        },
+      },
+    ],
+  },
+
+  // ── El agente dentro de tu app ────────────────────────────────────────────
+  // El asistente de Handeia vive en tu superficie. Tú declaras qué sabes
+  // hacer; él razona con eso más lo que sabe del usuario, que tú nunca ves.
+  agent: {
+    greeting: '¿En qué te ayudo?',
+    actions: [
+      {
+        name: 'ir_a',
+        description: 'Lleva al usuario a una sección de la app.',
+        params: [
+          { name: 'seccion', type: 'string', description: 'Sección destino.', required: true },
+        ],
+      },
+    ],
+    // Servicios que necesitas consultar. NUNCA recibes el token del usuario:
+    // pides la operación y la plataforma te devuelve solo el resultado.
+    needs: [],
+  },
+
+  permissions: ['read:datos'],
+  risk: 'low',
+})
+`
+
+  writeFileSync(out, plantilla, 'utf8')
+  console.log('✓ vaia.config.ts creado')
+  console.log('')
+  console.log('  Siguiente:')
+  console.log('    1. Edita el id, el nombre y lo que sabe hacer tu app.')
+  console.log('    2. npx vaia manifest      → genera el manifest')
+  console.log('    3. Súbelo desde el portal de developers.')
+}
+
+
+// ─── doctor ──────────────────────────────────────────────────────────────────
+
+/**
+ * `npx vaia doctor` — revisa tu configuración y te dice qué está mal.
+ *
+ * Existe porque los errores de autoridad no se ven leyendo: se ven cuando algo
+ * ya pasó. Esto los saca antes, y en lenguaje de persona.
+ */
+async function cmdDoctor() {
+  const cwd = process.cwd()
+  const configPath = resolve(cwd, 'vaia.config.js')
+
+  if (!existsSync(configPath)) {
+    console.error('✗ No encontré vaia.config.js. Compila tu vaia.config.ts primero, o corre `vaia init`.')
+    process.exit(1)
+  }
+
+  let config: CapabilityConfig
+  try {
+    const mod = await import(pathToFileURL(configPath).href)
+    config = (mod.default ?? mod.config) as CapabilityConfig
+  } catch (err) {
+    console.error(`✗ No pude cargar vaia.config.js:\n  ${err instanceof Error ? err.message : String(err)}`)
+    process.exit(1)
+  }
+
+  const avisos: string[] = []
+  const graves: string[] = []
+
+  // defineCapability ya rechaza lo inválido. Esto busca lo que es LEGAL pero
+  // probablemente no es lo que el desarrollador quiso.
+  for (const t of config.pieces?.tools ?? []) {
+    if (t.authority.level === 'autonoma' && t.authority.consequence === 'costosa' && !t.authority.rationale) {
+      avisos.push(`"${t.name}" gasta dinero sola y no explica por qué se le dio esa confianza.`)
+    }
+    if (t.permission && !config.permissions.includes(t.permission)) {
+      graves.push(`"${t.name}" pide el permiso "${t.permission}", que no está en la lista de permisos de la capacidad.`)
+    }
+  }
+
+  const usados = new Set((config.pieces?.tools ?? []).map(t => t.permission))
+  for (const p of config.permissions) {
+    if (!usados.has(p)) avisos.push(`El permiso "${p}" se pide pero ninguna herramienta lo usa. Pedir de más incomoda al usuario.`)
+  }
+
+  for (const a of config.agent?.actions ?? []) {
+    if (a.writes && !a.permission) {
+      graves.push(`La acción "${a.name}" modifica datos y no declara permiso.`)
+    }
+  }
+
+  if (graves.length === 0 && avisos.length === 0) {
+    console.log('✓ Todo en orden.')
+    return
+  }
+  for (const g of graves) console.error(`✗ ${g}`)
+  for (const a of avisos) console.log(`⚠ ${a}`)
+  if (graves.length > 0) process.exit(1)
 }
 
 // ─── manifest ────────────────────────────────────────────────────────────────
@@ -147,10 +303,12 @@ function printHelp() {
     `@vaia/sdk v${pkg.version}`,
     '',
     'Comandos:',
-    '  vaia manifest              Genera gandia.manifest.json desde vaia.config.js',
-    '  vaia manifest --validate   Valida un gandia.manifest.json existente',
-    '  vaia sign [payload]        Firma un payload con GANDIA_KEY_SECRET',
-    '  vaia version               Muestra la versión del SDK',
+    '  vaia-sdk init                  Crea vaia.config.ts listo para editar',
+    '  vaia-sdk doctor                Revisa tu configuración y avisa qué está mal',
+    '  vaia-sdk manifest              Genera gandia.manifest.json desde vaia.config.js',
+    '  vaia-sdk manifest --validate   Valida un gandia.manifest.json existente',
+    '  vaia-sdk sign [payload]        Firma un payload con GANDIA_KEY_SECRET',
+    '  vaia-sdk version               Muestra la versión del SDK',
     '',
     'Docs: https://github.com/diegoramirez772/vaia-sdk',
   ].join('\n'))

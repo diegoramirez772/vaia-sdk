@@ -5,6 +5,136 @@ Este paquete sigue [SemVer](https://semver.org/lang/es/).
 
 ---
 
+### Añadido — las 7 piezas operativas
+
+`defineCapability({ pieces })` declara skills, herramientas, workflows,
+agentes, personalidades y modalidades. Se validan al declararlas y viajan en
+el manifest, para que el portal pueda mostrar qué autoridad pide una capacidad
+**antes** de que alguien la instale.
+
+### Añadido — autoridad, y es obligatoria
+
+Casi todos los SDK de agentes saben decir *"puede llamar a esta función"*.
+Ninguno sabe decir *"hasta $500 solo, arriba pregunta, y nunca borrar"*. Aquí
+eso no es opcional — una pieza sin autoridad declarada no compila:
+
+- **Lo irreversible nunca puede ser autónomo.** No depende de que el modelo se
+  porte bien: depende de que no se pueda declarar.
+- **Gastar de forma autónoma exige tope Y moneda.** Un "500" sin moneda no
+  significa nada, y adivinarla es como se pierde dinero de verdad.
+- **Ninguna pieza puede superar el techo de su agente.** Sin esto se podría
+  declarar un agente limitado y colarle una herramienta que hace lo que él no
+  puede.
+- **Una herramienta sin permiso declarado se rechaza**: sin permiso no hay a
+  quién pedirle consentimiento ni a quién revocárselo.
+- `checkAuthority()` revisa además la ejecución concreta, incluyendo que no se
+  comparen montos de monedas distintas.
+
+### Añadido — evidencia
+
+`EvidencePolicy` permite exigir que una afirmación venga respaldada. Un
+asistente que no puede decir de dónde sacó algo es un oráculo, y un oráculo no
+se audita ni se corrige.
+
+### Añadido — puente MCP en dos direcciones
+
+MCP aporta catálogo y transporte; VAIA aporta la autoridad que MCP no sabe
+expresar.
+
+- `fromMCPTool()` importa una herramienta MCP, pero **la autoridad se asigna
+  aparte y es obligatoria**: importar algo de internet no debería concederle
+  permisos por el hecho de importarlo. Las pistas del servidor solo sirven para
+  avisar de incoherencias, nunca para decidir.
+- `toMCPTool()` publica hacia MCP, y **omite lo que requiere aprobación o está
+  prohibido**: exponerlo sería ofrecerle a un agente externo algo que ni el
+  propio dueño puede ejecutar solo.
+
+### Añadido — conectores prestados
+
+El espacio declara `needs: ['github', 'drive']` y pide operaciones; **jamás
+recibe el token del usuario**. Si cada espacio guardara tokens, la superficie
+de ataque se multiplicaría por cada desarrollador que publique. Solo lectura,
+lista cerrada de operaciones, y revocable por espacio.
+
+### Añadido — `npx vaia init`
+
+Deja una capacidad declarada y lista, sin cuenta, sin claves y sin red. Lo que
+genera **pasa la validación de autoridad**, así que el ejemplo enseña la regla
+en vez de enseñar el atajo.
+
+### Corregido — SEGURIDAD: el probe saltaba la verificación de firma
+
+`gandia.verify()` y `handeia.verify()` atendían el probe de salud **antes** de
+validar el HMAC. Cualquiera en internet podía mandar `x-gandia-probe: 1` (o el
+de Handeia) y hacer correr el endpoint del desarrollador sin autenticarse.
+
+El portal ya firmaba sus probes y ni siquiera mandaba esa cabecera, así que era
+código muerto que solo servía de puerta trasera. Exigir la firma no rompe a
+ningún consumidor.
+
+### Corregido — hex permisivo en la verificación de firmas
+
+`hexToBytes` usaba `parseInt`, que ante basura devuelve `NaN` y dejaba un cero
+silencioso. Una firma con caracteres inválidos se convertía en bytes en vez de
+rechazarse. Ahora valida que sea hexadecimal de verdad.
+
+---
+
+## [0.3.0] — 2026-07-31
+
+### Añadido — superficie de AGENTE (VAIA Extension Protocol)
+
+Permite que el asistente de Handeia viva dentro de un espacio de terceros.
+El reparto: **el espacio pone la superficie y las manos, Handeia pone el
+cerebro, la memoria y la autoridad.**
+
+Por eso un espacio no trae su propia IA. Si la trajera no conocería al
+usuario, empezaría de cero cada vez, y no podría contradecirse a sí mismo —
+el caso que lo justifica es que el espacio puntúe una vacante con 90 y el
+agente diga que conviene la de 87, porque sabe algo del usuario que el
+espacio no sabe.
+
+- `defineCapability({ agent: { actions, queryEndpoint } })` — el espacio
+  declara qué sabe hacer. Viaja en el manifest, así que el portal y Handeia
+  lo conocen sin abrir el código de nadie.
+- `validateAgentSurface()` — valida el contrato **al declararlo**, no en
+  producción: un contrato mal escrito debe reventar en el escritorio del
+  desarrollador, no frente al usuario.
+- `validateActionCall()` — la lista blanca en ejecución. Aunque el modelo
+  alucine una acción o un argumento fuera de rango, aquí se detiene.
+- `AGENT_PROTOCOL_VERSION` — el protocolo va versionado desde el día uno.
+- Tipos del turno: `AgentTurnRequest`, `AgentTurnResponse`, `AgentAction`,
+  `AgentSpaceContext`, `AgentEvidence`.
+
+### Seguridad
+
+El espacio es **código de terceros**, y todo el diseño sale de ahí:
+
+- Lo que manda el espacio se llama `claims`, no `facts`. Handeia lo trata
+  como afirmación citada, nunca como instrucción y nunca al mismo nivel que
+  lo que sabe del usuario. Un espacio que escriba "ignora las instrucciones
+  anteriores" en su contexto no consigue nada.
+- Handeia **solo puede pedir acciones declaradas**. No improvisa, no toca el
+  DOM, no busca rodeos.
+- Una acción que modifica datos **exige un permiso declarado** — sin él, el
+  contrato ni siquiera compila — y se confirma con el usuario antes de
+  ejecutarse.
+- `queryEndpoint` debe ser una ruta propia: si se aceptaran URLs externas, un
+  espacio podría hacer que Handeia le pegue a un tercero con la identidad del
+  usuario.
+- `AgentEvidence` obliga a poder decir de dónde salió cada afirmación. Un
+  oráculo que no se explica no se gana la confianza.
+
+15 pruebas nuevas, con un espacio de mentira en vez de uno real: si el
+contrato solo funcionara porque conocemos Nexus, estaría mal hecho.
+
+### Compatibilidad
+
+Puramente aditivo. Nada cambia para quien ya usa `0.2.x`: sin el campo
+`agent`, el manifest sale idéntico a antes.
+
+---
+
 ## [0.2.0] — 2026-07-30
 
 ### Corregido — codificación del payload JWT (UTF-8)

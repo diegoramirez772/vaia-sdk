@@ -6,7 +6,7 @@
  * -----------------------------
  * El payload se serializa en UTF-8, como exige RFC 7519 §3. Esto importa
  * porque el token cruza fronteras de lenguaje: lo firma Gandia (TS), lo
- * verifica Nexus (TS) y lo reenvía a ACIPE (Python) — cualquier consumidor
+ * verifican distintos servicios del ecosistema — cualquier consumidor
  * que use una librería JWT estándar debe poder leerlo.
  *
  * Antes de v2 se usaba btoa()/atob(), que tratan cada carácter como UN byte
