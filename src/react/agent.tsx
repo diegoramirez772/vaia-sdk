@@ -16,6 +16,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useShadowRoot, useTemaDelHost } from './estilos.js'
+import { iniciarDictado, hayDictado, type SpeechRec } from './voz.js'
+import { LimiteDeError } from './limite-error.js'
 import { motion, AnimatePresence } from 'motion/react'
 import { Sparkles, X } from 'lucide-react'
 import { InputBar, MODELS } from './input-bar.js'
@@ -66,7 +68,21 @@ function acotar(x: number, y: number): { x: number; y: number } {
   }
 }
 
+/**
+ * El agente, con su red de seguridad puesta.
+ *
+ * Lo que se exporta envuelve al componente real: si algo revienta aquí dentro,
+ * desaparece el agente y la app que lo hospeda sigue funcionando.
+ */
 export function HandeiaAgent(props: HandeiaAgentProps) {
+  return (
+    <LimiteDeError>
+      <Agente {...props} />
+    </LimiteDeError>
+  )
+}
+
+function Agente(props: HandeiaAgentProps) {
   const base = (props.handeiaUrl ?? HANDEIA_POR_DEFECTO).replace(/\/$/, '')
 
   // Todo el agente vive dentro de este shadow root: sus estilos no salen y los
@@ -85,6 +101,14 @@ export function HandeiaAgent(props: HandeiaAgentProps) {
   const [enviado, setEnviado] = useState('')
   const [respuesta, setRespuesta] = useState('')
   const historial = useRef<{ role: 'user' | 'agent'; text: string }[]>([])
+
+  // Voz. `voiceMode` enciende el lienzo animado del campo (el de Handeia);
+  // `grabando` es el dictado en marcha.
+  const [voiceMode, setVoiceMode] = useState(false)
+  const [grabando, setGrabando] = useState(false)
+  const [recSecs, setRecSecs] = useState(0)
+  const recTimer = useRef<ReturnType<typeof setInterval> | null>(null)
+  const dictado = useRef<SpeechRec | null>(null)
   const [pendiente, setPendiente] = useState<{ name: string; args: Record<string, unknown> } | null>(null)
 
   // ── Arrastre del círculo, igual que en Handeia ─────────────────────────────
@@ -142,6 +166,33 @@ export function HandeiaAgent(props: HandeiaAgentProps) {
       window.visualViewport?.removeEventListener('scroll', medir)
     }
   }, [])
+
+  // ── Dictado ────────────────────────────────────────────────────────────────
+  const pararDictado = useCallback(() => {
+    dictado.current?.stop()
+    dictado.current = null
+    setGrabando(false)
+    setRecSecs(0)
+    if (recTimer.current) { clearInterval(recTimer.current); recTimer.current = null }
+  }, [])
+
+  const empezarDictado = useCallback(() => {
+    // El texto ya escrito se conserva: lo dictado se añade, no lo pisa.
+    const previo = texto ? texto + ' ' : ''
+    const rec = iniciarDictado(
+      dicho => setTexto(previo + dicho),
+      () => pararDictado(),
+    )
+    if (!rec) return
+    dictado.current = rec
+    setGrabando(true)
+    setRecSecs(0)
+    recTimer.current = setInterval(() => setRecSecs(s => s + 1), 1000)
+  }, [texto, pararDictado])
+
+  // Si el componente se va con el micrófono abierto, se cierra. Dejarlo
+  // escuchando sería lo peor que puede hacer un SDK.
+  useEffect(() => () => { dictado.current?.abort(); if (recTimer.current) clearInterval(recTimer.current) }, [])
 
   // ── Un turno contra Handeia ────────────────────────────────────────────────
   const turno = useCallback(async (mensaje: string, actionResult?: AgentActionResult) => {
@@ -274,8 +325,32 @@ export function HandeiaAgent(props: HandeiaAgentProps) {
   // frontera del shadow, así que un `data-theme` en el <html> no llega aquí.
   // Reproducirlo dentro es lo que hace que `dark:` funcione — y ahora gana
   // siempre, porque aquí dentro no compite con las utilidades de nadie.
+  // El fondo se desenfoca mientras Handeia piensa y mientras muestra la
+  // respuesta. Es lo que hace Handeia dentro de un espacio: la pantalla se
+  // transforma en vez de abrirse un chat encima.
+  //
+  // Dos capas, igual que el original: el desenfoque y, sobre él, un lavado
+  // hacia blanco o negro. Sin el lavado, una respuesta cae sobre lo que haya
+  // detrás —un vídeo oscuro, una foto— y el texto queda ilegible; el lavado
+  // le da contraste sin tener que meter el texto en una tarjeta.
+  const conBlur = fase === 'thinking' || (fase === 'done' && !!respuesta)
+
   return createPortal(
     <div className={tema === 'dark' ? 'dark' : undefined}>
+      <AnimatePresence>
+        {conBlur && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
+            // Un punto por debajo del campo: desenfoca la página, no el campo.
+            style={{ position: 'fixed', inset: 0, zIndex: 2147482999, pointerEvents: 'none' }}
+          >
+            <div className="absolute inset-0 backdrop-blur-[22px]" />
+            <div className="absolute inset-0 bg-white/60 dark:bg-black/55" />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <AnimatePresence>
         {fieldOpen && (
           <motion.div
@@ -344,12 +419,35 @@ export function HandeiaAgent(props: HandeiaAgentProps) {
                 placeholder={props.placeholder ?? 'Pregúntale a Handeia…'}
                 model={model}
                 onModelChange={setModel}
+                // Voz: el lienzo animado del campo y el dictado. Solo se
+                // ofrece si el navegador sabe dictar — un botón que no hace
+                // nada es peor que no tenerlo.
+                {...(hayDictado() ? {
+                  voiceMode,
+                  onVoiceModeToggle: () => {
+                    setVoiceMode(v => {
+                      if (v) pararDictado()
+                      return !v
+                    })
+                  },
+                  recording: grabando,
+                  recordSecs: recSecs,
+                  onStartRecording: empezarDictado,
+                  onCancelRecording: () => { pararDictado(); setTexto('') },
+                  // Se para el dictado y se manda lo dictado, que ya está en
+                  // el campo: es el mismo camino que un mensaje escrito.
+                  onSendRecording: () => { pararDictado(); if (texto.trim()) enviar() },
+                } : {})}
               />
             </div>
           </motion.div>
         )}
       </AnimatePresence>
 
+      {/* El círculo se va mientras el campo está abierto: ya hay una X para
+          cerrar, y dejarlo puesto solo tapa la pantalla y confunde sobre
+          cuál de los dos manda. Es lo que hace Handeia. */}
+      {!fieldOpen && (
       <button
         onPointerDown={onDown}
         onPointerMove={onMove}
@@ -364,6 +462,7 @@ export function HandeiaAgent(props: HandeiaAgentProps) {
       >
         <Sparkles className="w-4 h-4" strokeWidth={1.9} />
       </button>
+      )}
     </div>,
     shadow,
   )

@@ -227,7 +227,18 @@ export function VoiceCanvas({ recording, voiceMode }: { recording: boolean; voic
       raf = requestAnimationFrame(tick);
     };
 
-    navigator.mediaDevices
+    // `navigator.mediaDevices` NO existe fuera de un contexto seguro: en http
+    // sin TLS es undefined, y leerle .getUserMedia lanza un TypeError síncrono
+    // que React propaga hasta desmontar el agente entero. El .catch de abajo no
+    // lo cubre, porque no llega a haber promesa que rechazar.
+    const medios = navigator.mediaDevices;
+    if (!medios?.getUserMedia) {
+      // Sin micrófono disponible la animación se queda en reposo, que es un
+      // final digno; tumbar la app que nos hospeda no lo es.
+      return () => { volRef.current = 0; };
+    }
+
+    medios
       .getUserMedia({ audio: true, video: false })
       .then(s => {
         stream   = s;
@@ -937,6 +948,7 @@ export function InputBar({
                     >
                       <button
                         onClick={onStartRecording}
+                        aria-label="Dictar"
                         className="w-8 h-8 shrink-0 rounded-full flex items-center justify-center text-black/70 dark:text-white/87 hover:text-black dark:hover:text-white hover:bg-black/[0.05] dark:hover:bg-white/[0.05] transition-colors"
                       >
                         <Mic className="w-[15px] h-[15px]" strokeWidth={1.7} />
@@ -944,6 +956,7 @@ export function InputBar({
                       {onVoiceModeToggle && (
                         <button
                           onClick={onVoiceModeToggle}
+                          aria-label={voiceMode ? "Salir del modo voz" : "Modo voz"}
                           className={`w-8 h-8 shrink-0 rounded-full flex items-center justify-center transition-colors ${
                             voiceMode ? "bg-black/[0.07] dark:bg-white/[0.07] text-black dark:text-white" : "text-black/70 dark:text-white/87 hover:text-black dark:hover:text-white hover:bg-black/[0.05] dark:hover:bg-white/[0.05]"
                           }`}
