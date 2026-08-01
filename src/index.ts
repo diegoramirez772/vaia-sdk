@@ -30,10 +30,12 @@ export {
   validateActionCall,
   CONNECTOR_OF_OPERATION,
 } from './agent.js'
-// El círculo, para montar dentro de un espacio. Montaje neutral: no depende
-// de React ni de ningún framework, porque el SDK presume de cero dependencias
-// y un espacio en Vue o HTML puro tiene el mismo derecho al agente.
-export { mountAgent } from './agent-mount.js'
+// El círculo vive en `@vaia-lab/sdk/react`, no aquí: usa EL MISMO campo que
+// Handeia (motion, lucide), y meterlo en el núcleo obligaría a cargar React a
+// quien solo quiere la capa de autoridad. Una versión "equivalente" en HTML
+// plano se desviaría del original en cuanto alguien lo tocara — y entonces el
+// agente dejaría de sentirse Handeia, que es justo el punto de ponerlo dentro
+// de un espacio ajeno.
 
 // ─── Las 7 piezas operativas ─────────────────────────────────────────────────
 export { validatePieces, requiresApproval, checkAuthority } from './pieces.js'
@@ -67,7 +69,6 @@ export type {
 // expresar. Importar algo de internet nunca concede permisos por sí solo.
 export { fromMCPTool, toMCPTool, toMCPTools } from './mcp.js'
 export type { MCPTool, MCPInputSchema } from './mcp.js'
-export type { MountAgentOptions, AgentHandle } from './agent-mount.js'
 
 export type {
   ConnectorNeed,

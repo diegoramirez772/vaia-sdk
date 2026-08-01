@@ -80,6 +80,36 @@ rechazarse. Ahora valida que sea hexadecimal de verdad.
 
 ---
 
+## [0.4.0] — 2026-07-31
+
+### Añadido — `@vaia-lab/sdk/react` con EL MISMO campo de Handeia
+
+`HandeiaAgent` monta el círculo y el campo del asistente dentro de un espacio
+de terceros. No es una imitación: el `InputBar` es una copia directa del de
+Handeia, con un único cambio —el hook de tema, que dependía del proveedor de
+la app y aquí se resuelve leyendo el documento.
+
+Se copia en vez de reescribirse a propósito. Una versión "equivalente" se
+desviaría del original en cuanto alguien lo tocara, y entonces el agente
+dejaría de sentirse Handeia — que es justo el punto de ponerlo en un espacio
+ajeno.
+
+Misma mecánica que el original: el círculo se arrastra, se acota a lo que de
+verdad se ve (`visualViewport`, porque las barras del navegador se comen alto
+en móvil), y al soltarlo sin moverlo abre el campo hacia el lado donde hay
+espacio. La respuesta va centrada y sin tarjeta: la pantalla se transforma, no
+se abre un chat.
+
+### Quitado — `mountAgent()` en HTML plano
+
+Era el enfoque equivocado. Se justificó con "cero dependencias", pero el
+resultado era una copia peor del campo real que además se iba a desviar. Vive
+ahora en el subpath `react`, con React, motion y lucide como **peer
+dependencies opcionales**: el núcleo sigue sin una sola línea de React, y
+quien solo quiere la capa de autoridad no carga nada de eso.
+
+---
+
 ## [0.3.0] — 2026-07-31
 
 ### Añadido — superficie de AGENTE (VAIA Extension Protocol)

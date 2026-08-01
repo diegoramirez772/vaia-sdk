@@ -1,12 +1,17 @@
 {
   "name": "@vaia-lab/sdk",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "VAIA SDK — platform integration for Gandia-7 and Handeia developers",
   "author": "VAIA <hello@vaia.dev>",
   "license": "MIT",
-  "repository": { "type": "git", "url": "git+https://github.com/diegoramirez772/vaia-sdk.git" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/diegoramirez772/vaia-sdk.git"
+  },
   "homepage": "https://github.com/diegoramirez772/vaia-sdk#readme",
-  "bugs": { "url": "https://github.com/diegoramirez772/vaia-sdk/issues" },
+  "bugs": {
+    "url": "https://github.com/diegoramirez772/vaia-sdk/issues"
+  },
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -20,6 +25,16 @@
       "require": {
         "types": "./dist/index.d.cts",
         "default": "./dist/index.cjs"
+      }
+    },
+    "./react": {
+      "import": {
+        "types": "./dist/react/index.d.ts",
+        "default": "./dist/react/index.js"
+      },
+      "require": {
+        "types": "./dist/react/index.d.cts",
+        "default": "./dist/react/index.cjs"
       }
     }
   },
@@ -57,7 +72,27 @@
   ],
   "devDependencies": {
     "@types/node": "^26.0.1",
+    "@types/react": "^19.2.18",
+    "lucide-react": "^1.28.0",
+    "motion": "^12.43.0",
+    "react": "^19.2.8",
     "tsup": "^8.0.0",
     "typescript": "^5.4.0"
+  },
+  "peerDependencies": {
+    "lucide-react": ">=0.400.0",
+    "motion": ">=11.0.0",
+    "react": ">=18.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    },
+    "motion": {
+      "optional": true
+    },
+    "lucide-react": {
+      "optional": true
+    }
   }
 }

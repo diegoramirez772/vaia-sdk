@@ -1,0 +1,298 @@
+'use client';
+
+/**
+ * El agente de Handeia dentro de un espacio — con EL MISMO círculo y EL MISMO
+ * campo que dentro de Handeia, no una imitación.
+ *
+ * Se copió la mecánica tal cual del original (EspacioAgentLayer): el círculo
+ * se arrastra, se acota a lo que de verdad se ve, y al soltarlo sin moverlo se
+ * abre el campo hacia el lado donde hay espacio. Reescribirlo "parecido" habría
+ * hecho que se desviara en cuanto alguien tocara el original — y entonces el
+ * agente dejaría de sentirse Handeia, que es justo el punto de ponerlo aquí.
+ *
+ * El espacio declara qué sabe hacer; Handeia razona. Aquí no hay ninguna IA.
+ */
+
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { motion, AnimatePresence } from 'motion/react'
+import { Sparkles, X } from 'lucide-react'
+import { InputBar, MODELS } from './input-bar.js'
+import { AGENT_PROTOCOL_VERSION } from '../agent.js'
+import type {
+  AgentAction, AgentActionResult, AgentSpaceContext, AgentTurnResponse,
+} from '../agent.js'
+
+const CIRCLE_SIZE = 44
+const FIELD_GAP = 12
+const HANDEIA_POR_DEFECTO = 'https://handeia.com'
+const RUTA_TURNO = '/api/agent/space'
+
+export interface HandeiaAgentProps {
+  /** capability_id del espacio, el mismo del manifest. */
+  capabilityId: string
+  /** Dónde vive Handeia. Un solo endpoint; el SDK no sabe qué hay detrás. */
+  handeiaUrl?: string | undefined
+  /** Qué está viendo el usuario AHORA. Se pregunta cada turno, no se cachea. */
+  getContext?: (() => AgentSpaceContext | Promise<AgentSpaceContext>) | undefined
+  /** Las mismas acciones que declara el manifest. */
+  actions?: AgentAction[] | undefined
+  /** Ejecuta una acción. Solo llega lo que Handeia ya validó. */
+  onAction?: ((name: string, args: Record<string, unknown>) =>
+    Promise<AgentActionResult> | AgentActionResult) | undefined
+  placeholder?: string | undefined
+}
+
+/**
+ * Deja el círculo dentro de lo que el usuario REALMENTE ve.
+ *
+ * Acotarlo a la ventana no basta en móvil: las barras del navegador se comen
+ * alto, y sin esto se puede arrastrar a una zona que no se ve. visualViewport
+ * da el alto visible de verdad.
+ */
+function acotar(x: number, y: number): { x: number; y: number } {
+  const M = 8
+  const vv = typeof window !== 'undefined' ? window.visualViewport : null
+  const w = vv?.width ?? window.innerWidth
+  const h = vv?.height ?? window.innerHeight
+  return {
+    x: Math.min(Math.max(x, M), Math.max(M, w - CIRCLE_SIZE - M)),
+    y: Math.min(Math.max(y, M), Math.max(M, h - CIRCLE_SIZE - M)),
+  }
+}
+
+export function HandeiaAgent(props: HandeiaAgentProps) {
+  const base = (props.handeiaUrl ?? HANDEIA_POR_DEFECTO).replace(/\/$/, '')
+
+  const [fieldOpen, setFieldOpen] = useState(false)
+  const [pos, setPos] = useState<{ x: number; y: number; openLeft: boolean; openAbove: boolean } | null>(null)
+  const drag = useRef<{ startX: number; startY: number; origX: number; origY: number; moved: boolean } | null>(null)
+
+  const [texto, setTexto] = useState('')
+  const [model, setModel] = useState(MODELS[0]?.id ?? '')
+  const [fase, setFase] = useState<'idle' | 'thinking' | 'done'>('idle')
+  const [enviado, setEnviado] = useState('')
+  const [respuesta, setRespuesta] = useState('')
+  const historial = useRef<{ role: 'user' | 'agent'; text: string }[]>([])
+  const [pendiente, setPendiente] = useState<{ name: string; args: Record<string, unknown> } | null>(null)
+
+  // ── Arrastre del círculo, igual que en Handeia ─────────────────────────────
+  const onDown = (e: React.PointerEvent<HTMLButtonElement>) => {
+    const r = e.currentTarget.getBoundingClientRect()
+    drag.current = {
+      startX: e.clientX, startY: e.clientY,
+      origX: pos?.x ?? r.left, origY: pos?.y ?? r.top,
+      moved: false,
+    }
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }
+
+  const onMove = (e: React.PointerEvent<HTMLButtonElement>) => {
+    const d = drag.current
+    if (!d) return
+    const dx = e.clientX - d.startX
+    const dy = e.clientY - d.startY
+    // Umbral: sin esto, un clic con temblor de dedo contaría como arrastre y
+    // el campo nunca se abriría.
+    if (!d.moved && Math.hypot(dx, dy) < 6) return
+    d.moved = true
+    const { x, y } = acotar(d.origX + dx, d.origY + dy)
+    const vv = window.visualViewport
+    setPos({
+      x, y,
+      openLeft: x > (vv?.width ?? window.innerWidth) / 2,
+      openAbove: y > (vv?.height ?? window.innerHeight) / 2,
+    })
+  }
+
+  const onUp = () => {
+    const d = drag.current
+    drag.current = null
+    if (d && !d.moved) setFieldOpen(v => !v)   // fue clic, no arrastre
+  }
+
+  // Las barras del navegador aparecen y desaparecen: una posición válida deja
+  // de serlo sola.
+  useEffect(() => {
+    const reacomodar = () => setPos(p => (p ? { ...p, ...acotar(p.x, p.y) } : p))
+    window.addEventListener('resize', reacomodar)
+    window.visualViewport?.addEventListener('resize', reacomodar)
+    return () => {
+      window.removeEventListener('resize', reacomodar)
+      window.visualViewport?.removeEventListener('resize', reacomodar)
+    }
+  }, [])
+
+  // ── Un turno contra Handeia ────────────────────────────────────────────────
+  const turno = useCallback(async (mensaje: string, actionResult?: AgentActionResult) => {
+    let context: AgentSpaceContext | undefined
+    try { context = await props.getContext?.() } catch { context = undefined }
+
+    let data: AgentTurnResponse & { ok?: boolean; error?: string }
+    try {
+      const res = await fetch(`${base}${RUTA_TURNO}`, {
+        method: 'POST',
+        // La identidad va en la cookie de sesión de Handeia. El espacio nunca
+        // ve ni toca el token del usuario.
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json; charset=utf-8' },
+        body: JSON.stringify({
+          protocol: AGENT_PROTOCOL_VERSION,
+          capId: props.capabilityId,
+          message: mensaje,
+          context,
+          actions: props.actions ?? [],
+          history: historial.current.slice(-12),
+          actionResult,
+        }),
+      })
+      data = await res.json()
+      if (!res.ok || data.ok === false) {
+        setRespuesta(
+          data.error === 'no_autenticado' ? 'Inicia sesión en Handeia para usar el asistente.'
+          : data.error === 'espacio_no_instalado' ? 'Este espacio no está instalado en tu Handeia.'
+          : data.error === 'cupo_agotado' ? 'Se agotó el uso del asistente por hoy en este espacio.'
+          : 'Handeia no pudo responder ahora mismo.',
+        )
+        setFase('done')
+        return
+      }
+    } catch {
+      setRespuesta('No pude comunicarme con Handeia.')
+      setFase('done')
+      return
+    }
+
+    if (data.text) {
+      setRespuesta(data.text)
+      historial.current.push({ role: 'agent', text: data.text })
+    }
+    setFase('done')
+
+    if (!data.action) return
+    if (!props.onAction) {
+      setRespuesta('Esto requiere una acción que este espacio todavía no sabe ejecutar.')
+      return
+    }
+
+    // Lo que escribe se confirma. Un agente que escribe sin preguntar se siente
+    // fuera de control incluso cuando acierta.
+    if (data.confirm) {
+      setPendiente({ name: data.action.name, args: data.action.args ?? {} })
+      return
+    }
+    await ejecutar(data.action.name, data.action.args ?? {}, mensaje)
+  }, [base, props])
+
+  const ejecutar = useCallback(async (name: string, args: Record<string, unknown>, mensaje: string) => {
+    let r: AgentActionResult
+    try {
+      r = await props.onAction!(name, args)
+    } catch (e) {
+      r = { action: name, ok: false, error: e instanceof Error ? e.message : 'falló' }
+    }
+    setFase('thinking')
+    await turno(mensaje, r)
+  }, [props, turno])
+
+  const enviar = useCallback(() => {
+    const t = texto.trim()
+    if (!t || fase === 'thinking') return
+    setTexto(''); setEnviado(t); setRespuesta(''); setPendiente(null); setFase('thinking')
+    historial.current.push({ role: 'user', text: t })
+    void turno(t)
+  }, [texto, fase, turno])
+
+  // ── Posición del campo, misma lógica que en Handeia ────────────────────────
+  const sinMover = !pos
+  const left = sinMover ? '50%' : pos!.openLeft ? pos!.x - FIELD_GAP : pos!.x + CIRCLE_SIZE + FIELD_GAP
+  const top = sinMover ? window?.innerHeight - 20 : pos!.openAbove ? pos!.y - FIELD_GAP : pos!.y + CIRCLE_SIZE + FIELD_GAP
+  const tx = sinMover ? '-50%' : pos!.openLeft ? '-100%' : '0%'
+  const ty = sinMover ? '-100%' : pos!.openAbove ? '-100%' : '0%'
+
+  return (
+    <>
+      <AnimatePresence>
+        {fieldOpen && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.97, y: 6 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.98, y: 4 }}
+            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+            style={{ position: 'fixed', left, top, transform: `translate(${tx}, ${ty})`, zIndex: 2147483000 }}
+            className="w-[min(560px,calc(100vw-32px))]"
+          >
+            <div className="relative">
+              <button
+                onClick={() => { setFieldOpen(false); setEnviado(''); setRespuesta(''); setFase('idle') }}
+                aria-label="Cerrar"
+                className="absolute -top-2.5 -right-2.5 z-10 w-6 h-6 rounded-full flex items-center justify-center text-white dark:text-black bg-black dark:bg-white shadow-[0_4px_14px_-2px_rgba(0,0,0,0.4)] transition-transform hover:scale-110 active:scale-95"
+              >
+                <X className="w-3 h-3" strokeWidth={2.4} />
+              </button>
+
+              {/* La respuesta va ARRIBA del campo, centrada y sin tarjeta —
+                  el mismo tratamiento que en Handeia: la pantalla se
+                  transforma, no se abre un chat. */}
+              <AnimatePresence>
+                {fase === 'done' && respuesta && (
+                  <motion.div
+                    key={enviado}
+                    initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+                    transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+                    className="mb-4 flex flex-col items-center gap-2 text-center px-2"
+                  >
+                    <p className="text-[11px] uppercase tracking-[0.15em] text-black/30 dark:text-white/55 truncate max-w-full">{enviado}</p>
+                    <p className="text-[17px] text-black/85 dark:text-white/92 tracking-[-0.02em] leading-relaxed">{respuesta}</p>
+
+                    {pendiente && (
+                      <div className="mt-1 flex items-center gap-2">
+                        <button
+                          onClick={() => { const p = pendiente; setPendiente(null); void ejecutar(p.name, p.args, enviado) }}
+                          className="h-8 px-4 rounded-full bg-black dark:bg-white text-white dark:text-black text-[12px] tracking-[-0.01em]"
+                        >
+                          Hacerlo
+                        </button>
+                        <button
+                          onClick={() => { setPendiente(null); setRespuesta('Cancelado.') }}
+                          className="h-8 px-4 rounded-full border border-black/[0.12] dark:border-white/[0.18] text-black/70 dark:text-white/85 text-[12px]"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              <InputBar
+                value={texto}
+                onChange={setTexto}
+                onSend={enviar}
+                aiPhase={fase}
+                sentText={enviado}
+                placeholder={props.placeholder ?? 'Pregúntale a Handeia…'}
+                model={model}
+                onModelChange={setModel}
+              />
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <button
+        onPointerDown={onDown}
+        onPointerMove={onMove}
+        onPointerUp={onUp}
+        aria-label="Asistente de Handeia"
+        style={{
+          position: 'fixed',
+          zIndex: 2147483000,
+          ...(pos ? { left: pos.x, top: pos.y } : { bottom: 20, right: 20 }),
+        }}
+        className="w-11 h-11 rounded-full flex items-center justify-center text-white bg-black dark:bg-white dark:text-black shadow-[0_10px_30px_-6px_rgba(0,0,0,0.4)] transition-transform hover:scale-105 active:scale-95 touch-none cursor-grab active:cursor-grabbing"
+      >
+        <Sparkles className="w-4 h-4" strokeWidth={1.9} />
+      </button>
+    </>
+  )
+}
