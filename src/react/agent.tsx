@@ -51,7 +51,11 @@ export interface HandeiaAgentProps {
  */
 function acotar(x: number, y: number): { x: number; y: number } {
   const M = 8
-  const vv = typeof window !== 'undefined' ? window.visualViewport : null
+  // Sin navegador no hay ventana que acotar. El guard va aquí arriba y no en
+  // cada lectura: `window?.innerWidth` NO protege de nada, porque el optional
+  // chaining cubre propiedades nulas, no una global que no existe.
+  if (typeof window === 'undefined') return { x, y }
+  const vv = window.visualViewport
   const w = vv?.width ?? window.innerWidth
   const h = vv?.height ?? window.innerHeight
   return {
@@ -63,6 +67,7 @@ function acotar(x: number, y: number): { x: number; y: number } {
 export function HandeiaAgent(props: HandeiaAgentProps) {
   const base = (props.handeiaUrl ?? HANDEIA_POR_DEFECTO).replace(/\/$/, '')
 
+  const [montado, setMontado] = useState(false)
   const [fieldOpen, setFieldOpen] = useState(false)
   const [pos, setPos] = useState<{ x: number; y: number; openLeft: boolean; openAbove: boolean } | null>(null)
   const drag = useRef<{ startX: number; startY: number; origX: number; origY: number; moved: boolean } | null>(null)
@@ -109,6 +114,9 @@ export function HandeiaAgent(props: HandeiaAgentProps) {
     drag.current = null
     if (d && !d.moved) setFieldOpen(v => !v)   // fue clic, no arrastre
   }
+
+  // Solo corre en el navegador: es la señal de que ya se puede leer `window`.
+  useEffect(() => setMontado(true), [])
 
   // Las barras del navegador aparecen y desaparecen: una posición válida deja
   // de serlo sola.
@@ -202,10 +210,20 @@ export function HandeiaAgent(props: HandeiaAgentProps) {
     void turno(t)
   }, [texto, fase, turno])
 
+  // Next renderiza los componentes de cliente TAMBIÉN en el servidor en la
+  // primera carga, aunque el archivo lleve 'use client'. Este círculo es puro
+  // navegador —posición, arrastre, tema, viewport— así que no se pinta hasta
+  // estar montado.
+  //
+  // Sin esto el árbol entero revienta con "window is not defined" y el espacio
+  // se queda sin agente, que es exactamente lo que pasaba. No se pierde nada:
+  // un overlay flotante no aporta al HTML inicial ni al buscador.
+  if (!montado) return null
+
   // ── Posición del campo, misma lógica que en Handeia ────────────────────────
   const sinMover = !pos
   const left = sinMover ? '50%' : pos!.openLeft ? pos!.x - FIELD_GAP : pos!.x + CIRCLE_SIZE + FIELD_GAP
-  const top = sinMover ? window?.innerHeight - 20 : pos!.openAbove ? pos!.y - FIELD_GAP : pos!.y + CIRCLE_SIZE + FIELD_GAP
+  const top = sinMover ? window.innerHeight - 20 : pos!.openAbove ? pos!.y - FIELD_GAP : pos!.y + CIRCLE_SIZE + FIELD_GAP
   const tx = sinMover ? '-50%' : pos!.openLeft ? '-100%' : '0%'
   const ty = sinMover ? '-100%' : pos!.openAbove ? '-100%' : '0%'
 
