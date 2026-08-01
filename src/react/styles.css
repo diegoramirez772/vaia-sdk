@@ -36,8 +36,22 @@
  */
 @layer theme, base, components, utilities;
 
-@import "tailwindcss/theme.css" layer(theme);
-@import "tailwindcss/utilities.css" layer(utilities);
+/**
+ * Tailwind COMPLETO, con preflight incluido.
+ *
+ * Al principio se importaba sin preflight, para no reescribirle los estilos
+ * base a la app que hospeda. Con el CSS dentro del Shadow DOM ese miedo ya no
+ * aplica: nada de aquí sale. Y sin preflight el campo se veía mal de una forma
+ * muy concreta —el navegador imponía sus estilos nativos de formulario—:
+ *
+ *   · la tipografía salía MONOESPACIADA, porque textarea y button no heredan
+ *     la fuente si nadie se lo dice
+ *   · el textarea traía su borde gris de fábrica alrededor del texto
+ *   · los botones redondos salían con su anillo nativo
+ *
+ * El preflight arregla los tres, y aquí dentro no le hace daño a nadie.
+ */
+@import "tailwindcss";
 
 /**
  * Modo oscuro: cada proyecto lo marca a su manera y el SDK tiene que verse
@@ -45,6 +59,19 @@
  * Se cubren las dos, en el elemento y en sus descendientes.
  */
 @custom-variant dark (&:where(.dark, .dark *, [data-theme="dark"], [data-theme="dark"] *));
+
+/**
+ * La tipografía se hereda de la página, no se impone.
+ *
+ * El agente debe sentirse parte de donde está: si Nexus usa Geist, el campo
+ * usa Geist. Sin esto, el preflight pondría la fuente por defecto de Tailwind
+ * y el agente se vería como un widget pegado encima.
+ */
+:host {
+  font-family: inherit;
+  font-size: 16px;
+  line-height: normal;
+}
 
 /* Solo se mira el código del propio SDK: nada de lo que use el host entra. */
 @source "./";

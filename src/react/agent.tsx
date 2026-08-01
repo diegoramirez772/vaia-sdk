@@ -14,7 +14,8 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { asegurarEstilos } from './estilos.js'
+import { createPortal } from 'react-dom'
+import { useShadowRoot, useTemaDelHost } from './estilos.js'
 import { motion, AnimatePresence } from 'motion/react'
 import { Sparkles, X } from 'lucide-react'
 import { InputBar, MODELS } from './input-bar.js'
@@ -68,7 +69,11 @@ function acotar(x: number, y: number): { x: number; y: number } {
 export function HandeiaAgent(props: HandeiaAgentProps) {
   const base = (props.handeiaUrl ?? HANDEIA_POR_DEFECTO).replace(/\/$/, '')
 
-  const [montado, setMontado] = useState(false)
+  // Todo el agente vive dentro de este shadow root: sus estilos no salen y los
+  // de la app no entran. Ver estilos.ts para el porqué, que costó caro.
+  const shadow = useShadowRoot()
+  const tema = useTemaDelHost()
+
   const [vp, setVp] = useState({ w: 0, h: 0 })
   const [fieldOpen, setFieldOpen] = useState(false)
   const [pos, setPos] = useState<{ x: number; y: number; openLeft: boolean; openAbove: boolean } | null>(null)
@@ -122,17 +127,12 @@ export function HandeiaAgent(props: HandeiaAgentProps) {
   // alto VISIBLE (visualViewport), no innerHeight, que en móvil incluye lo que
   // tapan las barras — medir con él deja el campo debajo de lo que se ve.
   useEffect(() => {
-    // Antes de medir nada: sin los estilos puestos, el campo no tiene ni el
-    // tamaño que se va a medir.
-    asegurarEstilos()
-
     const medir = () => {
       const vv = window.visualViewport
       setVp({ w: vv?.width ?? window.innerWidth, h: vv?.height ?? window.innerHeight })
       setPos(p => (p ? { ...p, ...acotar(p.x, p.y) } : p))
     }
     medir()
-    setMontado(true)
     window.addEventListener('resize', medir)
     window.visualViewport?.addEventListener('resize', medir)
     window.visualViewport?.addEventListener('scroll', medir)
@@ -223,15 +223,12 @@ export function HandeiaAgent(props: HandeiaAgentProps) {
     void turno(t)
   }, [texto, fase, turno])
 
-  // Next renderiza los componentes de cliente TAMBIÉN en el servidor en la
-  // primera carga, aunque el archivo lleve 'use client'. Este círculo es puro
-  // navegador —posición, arrastre, tema, viewport— así que no se pinta hasta
-  // estar montado.
-  //
-  // Sin esto el árbol entero revienta con "window is not defined" y el espacio
-  // se queda sin agente, que es exactamente lo que pasaba. No se pierde nada:
-  // un overlay flotante no aporta al HTML inicial ni al buscador.
-  if (!montado) return null
+  // El shadow root se crea en un efecto, o sea solo en el navegador. Eso hace
+  // de guardia para el render de servidor: Next renderiza los componentes de
+  // cliente también en el servidor en la primera carga, y aquí se lee `window`
+  // por todas partes. Sin esta salida, el árbol entero revienta con "window is
+  // not defined" y el espacio se queda sin agente.
+  if (!shadow) return null
 
   // ── Dónde cabe el campo ────────────────────────────────────────────────────
   //
@@ -273,8 +270,12 @@ export function HandeiaAgent(props: HandeiaAgentProps) {
   // Una respuesta larga no puede empujar el campo fuera de la pantalla.
   const maxAlto = Math.max(ALTO_MIN, vp.h - (top ?? bottom ?? 0) - M)
 
-  return (
-    <>
+  // El árbol se marca con el tema del host: los selectores no cruzan la
+  // frontera del shadow, así que un `data-theme` en el <html> no llega aquí.
+  // Reproducirlo dentro es lo que hace que `dark:` funcione — y ahora gana
+  // siempre, porque aquí dentro no compite con las utilidades de nadie.
+  return createPortal(
+    <div className={tema === 'dark' ? 'dark' : undefined}>
       <AnimatePresence>
         {fieldOpen && (
           <motion.div
@@ -363,6 +364,7 @@ export function HandeiaAgent(props: HandeiaAgentProps) {
       >
         <Sparkles className="w-4 h-4" strokeWidth={1.9} />
       </button>
-    </>
+    </div>,
+    shadow,
   )
 }

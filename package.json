@@ -1,6 +1,6 @@
 {
   "name": "@vaia-lab/sdk",
-  "version": "0.4.4",
+  "version": "0.5.0",
   "description": "VAIA SDK — platform integration for Gandia-7 and Handeia developers",
   "author": "VAIA <hello@vaia.dev>",
   "license": "MIT",
@@ -74,9 +74,11 @@
     "@tailwindcss/cli": "^4.3.3",
     "@types/node": "^26.0.1",
     "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
     "lucide-react": "^1.28.0",
     "motion": "^12.43.0",
     "react": "^19.2.8",
+    "react-dom": "^19.2.8",
     "tailwindcss": "^4.3.3",
     "tsup": "^8.0.0",
     "typescript": "^5.4.0"
@@ -84,7 +86,8 @@
   "peerDependencies": {
     "lucide-react": ">=0.400.0",
     "motion": ">=11.0.0",
-    "react": ">=18.0.0"
+    "react": ">=18.0.0",
+    "react-dom": ">=18.0.0"
   },
   "peerDependenciesMeta": {
     "react": {
@@ -94,6 +97,9 @@
       "optional": true
     },
     "lucide-react": {
+      "optional": true
+    },
+    "react-dom": {
       "optional": true
     }
   }
