@@ -5,6 +5,43 @@ Este paquete sigue [SemVer](https://semver.org/lang/es/).
 
 ---
 
+## [0.7.1] — 2026-08-01
+
+### Cambiado — getActionTarget ahora recibe también los argumentos
+
+`getActionTarget?: (name, args) => HTMLElement | null`. El nombre solo no
+alcanzaba para acciones sobre un elemento entre varios ("abrir la vacante 2"
+necesita saber CUÁL vacante). Compatible hacia atrás: nadie lo había
+implementado todavía.
+
+### Corregido — el campo se podía quedar corto de espacio real
+
+`ALTO_MIN` estaba en 64px — alcanza para el campo cerrado de un renglón, pero
+el campo real (fila de contenido + barra de acciones + borde, con el textarea
+en su máximo) mide ~220px. En una esquina apretada (círculo arrastrado cerca
+del borde) el campo podía terminar necesitando más espacio del garantizado.
+Subido a 240px.
+
+### Cambiado — la respuesta vive en su propia capa, no adentro del campo
+
+Antes la respuesta y el campo compartían el mismo contenedor flex, y el
+`InputBar` dependía de que flexbox le dejara suficiente espacio. Ahora:
+
+- La respuesta mide, con `ResizeObserver`, dónde empieza el campo AHORA MISMO
+  (no un cálculo) y ocupa desde arriba de la pantalla hasta justo ahí — el
+  espacio del campo nunca cuenta como disponible para ella.
+- Si el texto es corto, se centra en lo que sobra arriba del campo. Si es
+  largo, usa casi toda esa altura. Si no alcanza ni así, esa capa (y solo
+  esa) tiene su propio scroll.
+- El campo (`InputBar`) ahora está marcado `shrink-0`: nunca es él quien cede
+  espacio si algo aprieta.
+
+Las dos cosas juntas cierran el mismo problema por los dos lados: el campo
+tiene garantizado su mínimo real, y aunque no lo tuviera, ya no comparte
+contenedor con nada que pueda empujarlo.
+
+---
+
 ## [0.7.0] — 2026-08-01
 
 ### Añadido — el cursor de Handeia camina hasta la acción

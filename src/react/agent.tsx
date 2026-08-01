@@ -49,8 +49,12 @@ export interface HandeiaAgentProps {
    * lenguaje visual que usa Handeia al activar un artefacto propio. Sin
    * esto, la acción se ejecuta directo, sin animación: degradar bien es
    * mejor que obligar a cablear algo que el espacio todavía no tiene.
+   *
+   * Recibe `args` además del nombre porque el nombre solo no alcanza para
+   * acciones sobre un elemento entre varios — "abrir la vacante 2" necesita
+   * saber CUÁL vacante, no solo que la acción es "abrir_vacante".
    */
-  getActionTarget?: ((name: string) => HTMLElement | null | undefined) | undefined
+  getActionTarget?: ((name: string, args: Record<string, unknown>) => HTMLElement | null | undefined) | undefined
   placeholder?: string | undefined
 }
 
@@ -110,6 +114,14 @@ function Agente(props: HandeiaAgentProps) {
   const [respuesta, setRespuesta] = useState('')
   const historial = useRef<{ role: 'user' | 'agent'; text: string }[]>([])
   const campoRef = useRef<HTMLDivElement>(null)
+
+  // Dónde empieza el campo AHORA MISMO (borde superior real, medido, no
+  // calculado) — la respuesta usa esto para saber cuánto espacio tiene libre
+  // arriba del campo. Se remide con ResizeObserver porque el campo cambia de
+  // alto solo (el textarea crece al escribir, el estado cambia entre
+  // idle/pensando/grabando) — un valor calculado una sola vez se desactualiza
+  // apenas el usuario escribe una segunda línea.
+  const [campoTop, setCampoTop] = useState<number | null>(null)
 
   // Cursor caminando hasta la acción — mismo lenguaje que Handeia usa para
   // activar sus propios artefactos. `key` fuerza un remount por caminata:
@@ -210,6 +222,27 @@ function Agente(props: HandeiaAgentProps) {
   // escuchando sería lo peor que puede hacer un SDK.
   useEffect(() => () => { dictado.current?.abort(); if (recTimer.current) clearInterval(recTimer.current) }, [])
 
+  // Mide el borde superior real del campo — cada vez que cambia de tamaño
+  // (textarea creciendo, cambio de fase, teclado de móvil abriéndose) y cada
+  // vez que se abre. Sin esto la respuesta usaría un cálculo viejo y podría
+  // terminar tapando el campo, o al revés, dejando un hueco de más.
+  useEffect(() => {
+    if (!fieldOpen) { setCampoTop(null); return }
+    const el = campoRef.current
+    if (!el) return
+    const medir = () => setCampoTop(el.getBoundingClientRect().top)
+    medir()
+    const ro = new ResizeObserver(medir)
+    ro.observe(el)
+    window.addEventListener('resize', medir)
+    window.visualViewport?.addEventListener('resize', medir)
+    return () => {
+      ro.disconnect()
+      window.removeEventListener('resize', medir)
+      window.visualViewport?.removeEventListener('resize', medir)
+    }
+  }, [fieldOpen])
+
   // ── El cursor caminando hasta la acción ─────────────────────────────────────
   //
   // Nunca con blur (ver `conBlur` más abajo): si el agente va a actuar sobre
@@ -220,14 +253,14 @@ function Agente(props: HandeiaAgentProps) {
   // `getActionTarget` es opcional: un espacio que todavía no lo implementa
   // simplemente no ve caminar el cursor, la acción se ejecuta directo. Nunca
   // es un error no tenerlo.
-  const caminarHastaAccion = useCallback((name: string, label: string): Promise<void> => {
+  const caminarHastaAccion = useCallback((name: string, args: Record<string, unknown>, label: string): Promise<void> => {
     return new Promise((resolve) => {
       // getActionTarget es código de terceros: si truena (un selector mal
       // escrito, lo que sea), la acción no se detiene por eso — se ejecuta
       // directo, igual que si el espacio nunca hubiera declarado un target.
       let el: HTMLElement | null | undefined
       try {
-        el = props.getActionTarget?.(name)
+        el = props.getActionTarget?.(name, args)
       } catch {
         el = null
       }
@@ -313,7 +346,7 @@ function Agente(props: HandeiaAgentProps) {
 
   const ejecutar = useCallback(async (name: string, args: Record<string, unknown>, mensaje: string) => {
     const declarada = props.actions?.find(a => a.name === name)
-    await caminarHastaAccion(name, declarada?.description ?? name)
+    await caminarHastaAccion(name, args, declarada?.description ?? name)
 
     let r: AgentActionResult
     try {
@@ -355,7 +388,13 @@ function Agente(props: HandeiaAgentProps) {
   // Ahora la posición son números y el transform queda libre para la animación.
   const M = 8
   const ancho = Math.min(560, Math.max(240, vp.w - M * 2))
-  const ALTO_MIN = 64   // lo que ocupa el campo cerrado; nunca se acota por debajo
+  // Lo que de verdad puede llegar a medir el campo: fila de contenido + barra
+  // de acciones + borde, con el textarea estirado a su máximo (max-h-[160px]
+  // en AutoTextarea). 64px alcanzaba para el campo cerrado de un renglón,
+  // pero no para eso — y entonces el campo se salía por abajo justo cuando
+  // más se necesitaba verlo (escribiendo un mensaje largo). Nunca se acota
+  // por debajo de esto.
+  const ALTO_MIN = 240
 
   let left: number
   let top: number | undefined
@@ -434,6 +473,58 @@ function Agente(props: HandeiaAgentProps) {
         </motion.div>
       )}
 
+      {/* La respuesta — en su PROPIA capa, no adentro del contenedor del
+          campo. Lee la pantalla desde arriba hasta justo encima de donde
+          esté el campo AHORA MISMO (campoTop, medido de verdad, no
+          calculado): el espacio del campo nunca cuenta como disponible.
+          Texto corto se ve centrado en lo que sobra arriba; texto largo usa
+          casi toda esa altura; si no alcanza ni así, esta capa desliza con
+          su propio scroll — pero el campo jamás se comprime ni se tapa,
+          porque su alto sale de medir el DOM real, no de una cuenta que
+          pueda quedar corta (eso es justo lo que fallaba antes: un cálculo
+          en vez de una medición, y el scroll de la respuesta terminaba
+          empujando o tapando el campo). */}
+      <AnimatePresence>
+        {fase === 'done' && respuesta && campoTop !== null && (
+          <motion.div
+            key={enviado}
+            initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+            transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+            style={{
+              position: 'fixed',
+              left: 0,
+              top: 0,
+              width: '100%',
+              height: Math.max(0, campoTop - FIELD_GAP),
+              zIndex: 2147483000,
+            }}
+            className="flex items-center justify-center px-10 pointer-events-none"
+          >
+            <div className="w-full max-w-[640px] max-h-full overflow-y-auto pointer-events-auto flex flex-col items-center gap-2 text-center px-2 py-4">
+              <p className="text-[11px] uppercase tracking-[0.15em] text-black/30 dark:text-white/55 truncate max-w-full">{enviado}</p>
+              <p className="text-[17px] text-black/85 dark:text-white/92 tracking-[-0.02em] leading-relaxed">{respuesta}</p>
+
+              {pendiente && (
+                <div className="mt-1 flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={() => { const p = pendiente; setPendiente(null); void ejecutar(p.name, p.args, enviado) }}
+                    className="h-8 px-4 rounded-full bg-black dark:bg-white text-white dark:text-black text-[12px] tracking-[-0.01em]"
+                  >
+                    Hacerlo
+                  </button>
+                  <button
+                    onClick={() => { setPendiente(null); setRespuesta('Cancelado.') }}
+                    className="h-8 px-4 rounded-full border border-black/[0.12] dark:border-white/[0.18] text-black/70 dark:text-white/85 text-[12px]"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <AnimatePresence>
         {fieldOpen && (
           <motion.div
@@ -459,75 +550,48 @@ function Agente(props: HandeiaAgentProps) {
                 <X className="w-3 h-3" strokeWidth={2.4} />
               </button>
 
-              {/* La respuesta va ARRIBA del campo, centrada y sin tarjeta —
-                  el mismo tratamiento que en Handeia: la pantalla se
-                  transforma, no se abre un chat. */}
-              <AnimatePresence>
-                {fase === 'done' && respuesta && (
-                  <motion.div
-                    key={enviado}
-                    initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-                    transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-                    className="mb-7 flex flex-col items-center gap-2 text-center px-2 min-h-0 overflow-y-auto"
-                  >
-                    <p className="text-[11px] uppercase tracking-[0.15em] text-black/30 dark:text-white/55 truncate max-w-full">{enviado}</p>
-                    <p className="text-[17px] text-black/85 dark:text-white/92 tracking-[-0.02em] leading-relaxed">{respuesta}</p>
-
-                    {pendiente && (
-                      <div className="mt-1 flex items-center gap-2">
-                        <button
-                          onClick={() => { const p = pendiente; setPendiente(null); void ejecutar(p.name, p.args, enviado) }}
-                          className="h-8 px-4 rounded-full bg-black dark:bg-white text-white dark:text-black text-[12px] tracking-[-0.01em]"
-                        >
-                          Hacerlo
-                        </button>
-                        <button
-                          onClick={() => { setPendiente(null); setRespuesta('Cancelado.') }}
-                          className="h-8 px-4 rounded-full border border-black/[0.12] dark:border-white/[0.18] text-black/70 dark:text-white/85 text-[12px]"
-                        >
-                          Cancelar
-                        </button>
-                      </div>
-                    )}
-                  </motion.div>
-                )}
-              </AnimatePresence>
-
-              <InputBar
-                value={texto}
-                onChange={setTexto}
-                onSend={enviar}
-                aiPhase={fase}
-                aiStatus={fase === 'acting' ? `Activando "${accionLabel}"…` : ''}
-                sentText={enviado}
-                placeholder={props.placeholder ?? 'Pregúntale a Handeia…'}
-                model={model}
-                onModelChange={setModel}
-                // Voz: el lienzo animado del campo y el dictado. Solo se
-                // ofrece si el navegador sabe dictar — un botón que no hace
-                // nada es peor que no tenerlo.
-                {...(hayDictado() ? {
-                  voiceMode,
-                  // Encender modo voz ARRANCA a escuchar de una vez — antes
-                  // solo prendía el lienzo animado y el micrófono se quedaba
-                  // esperando un segundo clic aparte, que se sentía como que
-                  // "no hacía nada". Apagarlo para el dictado en curso.
-                  onVoiceModeToggle: () => {
-                    setVoiceMode(v => {
-                      if (v) pararDictado()
-                      else empezarDictado()
-                      return !v
-                    })
-                  },
-                  recording: grabando,
-                  recordSecs: recSecs,
-                  onStartRecording: empezarDictado,
-                  onCancelRecording: () => { pararDictado(); setTexto('') },
-                  // Se para el dictado y se manda lo dictado, que ya está en
-                  // el campo: es el mismo camino que un mensaje escrito.
-                  onSendRecording: () => { pararDictado(); if (texto.trim()) enviar() },
-                } : {})}
-              />
+              {/* Nunca se encoge — la respuesta (afuera, en su propia capa,
+                  ver más abajo) es la única que cede espacio. Sin esto, un
+                  campo con poco margen arriba (circulo arrastrado cerca del
+                  borde) podría terminar comprimido por flexbox junto con la
+                  respuesta, en vez de quedar siempre intacto. */}
+              <div className="shrink-0">
+                <InputBar
+                  value={texto}
+                  onChange={setTexto}
+                  onSend={enviar}
+                  aiPhase={fase}
+                  aiStatus={fase === 'acting' ? `Activando "${accionLabel}"…` : ''}
+                  sentText={enviado}
+                  placeholder={props.placeholder ?? 'Pregúntale a Handeia…'}
+                  model={model}
+                  onModelChange={setModel}
+                  // Voz: el lienzo animado del campo y el dictado. Solo se
+                  // ofrece si el navegador sabe dictar — un botón que no hace
+                  // nada es peor que no tenerlo.
+                  {...(hayDictado() ? {
+                    voiceMode,
+                    // Encender modo voz ARRANCA a escuchar de una vez — antes
+                    // solo prendía el lienzo animado y el micrófono se quedaba
+                    // esperando un segundo clic aparte, que se sentía como que
+                    // "no hacía nada". Apagarlo para el dictado en curso.
+                    onVoiceModeToggle: () => {
+                      setVoiceMode(v => {
+                        if (v) pararDictado()
+                        else empezarDictado()
+                        return !v
+                      })
+                    },
+                    recording: grabando,
+                    recordSecs: recSecs,
+                    onStartRecording: empezarDictado,
+                    onCancelRecording: () => { pararDictado(); setTexto('') },
+                    // Se para el dictado y se manda lo dictado, que ya está en
+                    // el campo: es el mismo camino que un mensaje escrito.
+                    onSendRecording: () => { pararDictado(); if (texto.trim()) enviar() },
+                  } : {})}
+                />
+              </div>
             </div>
           </motion.div>
         )}
