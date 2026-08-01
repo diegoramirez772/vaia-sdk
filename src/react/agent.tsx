@@ -323,25 +323,40 @@ function Agente(props: HandeiaAgentProps) {
       return
     }
 
-    if (data.text) {
-      setRespuesta(data.text)
-      historial.current.push({ role: 'agent', text: data.text })
+    // El texto queda en el historial aunque no se muestre en pantalla — el
+    // agente sí debe recordar haberlo dicho, aunque venga pegado a una acción
+    // que se ejecuta sola.
+    if (data.text) historial.current.push({ role: 'agent', text: data.text })
+
+    if (data.action) {
+      if (!props.onAction) {
+        // Esto SÍ es algo que el usuario debe leer: el espacio no sabe hacer
+        // lo que se le pidió.
+        setRespuesta('Esto requiere una acción que este espacio todavía no sabe ejecutar.')
+        setFase('done')
+        return
+      }
+      // Lo que escribe se confirma, y ahí sí hay algo que leer antes de
+      // decidir — el mismo tratamiento que una respuesta de texto normal.
+      if (data.confirm) {
+        setRespuesta(data.text ?? '')
+        setFase('done')
+        setPendiente({ name: data.action.name, args: data.action.args ?? {} })
+        return
+      }
+      // "Llévame a X" no es una pregunta de texto: no hay nada que el usuario
+      // deba leer, así que la pantalla no se desenfoca ni se abre nada — se
+      // ejecuta directo. Antes esto igual pasaba por setFase('done') con el
+      // texto puesto, y esa transición sí llegaba a pintarse un instante
+      // (aunque el turno completo terminara en acción), así que la pantalla
+      // se veía desenfocarse de la nada para una acción pura.
+      await ejecutar(data.action.name, data.action.args ?? {}, mensaje)
+      return
     }
+
+    // Sin acción: es una pregunta de texto normal, con su blur de siempre.
+    setRespuesta(data.text ?? '')
     setFase('done')
-
-    if (!data.action) return
-    if (!props.onAction) {
-      setRespuesta('Esto requiere una acción que este espacio todavía no sabe ejecutar.')
-      return
-    }
-
-    // Lo que escribe se confirma. Un agente que escribe sin preguntar se siente
-    // fuera de control incluso cuando acierta.
-    if (data.confirm) {
-      setPendiente({ name: data.action.name, args: data.action.args ?? {} })
-      return
-    }
-    await ejecutar(data.action.name, data.action.args ?? {}, mensaje)
   }, [base, props])
 
   const ejecutar = useCallback(async (name: string, args: Record<string, unknown>, mensaje: string) => {

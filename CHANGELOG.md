@@ -5,6 +5,21 @@ Este paquete sigue [SemVer](https://semver.org/lang/es/).
 
 ---
 
+## [0.7.2] — 2026-08-01
+
+### Corregido — el blur aparecía para acciones que no necesitan texto
+
+"Llévame a X" no es una pregunta: no hay nada que el usuario deba leer. Antes,
+`turno()` siempre pasaba por `setFase('done')` con el texto puesto —aunque el
+turno terminara ejecutando una acción sola, sin confirmar— y esa transición sí
+llegaba a pintarse un instante, así que la pantalla se desenfocaba de la nada
+en medio de una acción pura. Ahora una acción sin confirmación va directo a
+`ejecutar()`, sin pasar por texto ni blur. Lo que SÍ sigue mostrando texto y
+blur: una pregunta normal, una acción que requiere confirmar (hay algo que
+leer antes de decidir), y un espacio que no sabe ejecutar lo que se le pidió.
+
+---
+
 ## [0.7.1] — 2026-08-01
 
 ### Cambiado — getActionTarget ahora recibe también los argumentos
