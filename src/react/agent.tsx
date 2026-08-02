@@ -31,6 +31,20 @@ const FIELD_GAP = 12
 const HANDEIA_POR_DEFECTO = 'https://handeia.com'
 const RUTA_TURNO = '/api/agent/space'
 
+/**
+ * El color del cursor del agente.
+ *
+ * Fijo, no por espacio: dentro de Nexus cada espacio tenía su tinte, pero aquí
+ * el cursor representa a HANDEIA actuando dentro de la app de otro — si tomara
+ * el color del anfitrión se confundiría con su propia UI, que es justo lo que
+ * no debe pasar. Violeta, el mismo de la identidad de voz del campo.
+ *
+ * Se elige un tono que aguanta fondo claro y oscuro sin cambiar: el puntero
+ * lleva contorno del color del fondo (blanco/negro), y ese contraste es lo que
+ * lo despega de cualquier cosa que tenga debajo.
+ */
+const CURSOR_COLOR = '#8b5cf6'
+
 export interface HandeiaAgentProps {
   /** capability_id del espacio, el mismo del manifest. */
   capabilityId: string
@@ -117,7 +131,11 @@ function Agente(props: HandeiaAgentProps) {
 
   const [texto, setTexto] = useState('')
   const [model, setModel] = useState(MODELS[0]?.id ?? '')
-  const [fase, setFase] = useState<'idle' | 'thinking' | 'acting' | 'done'>('idle')
+  // Sin 'done': al terminar un turno se vuelve a 'idle'. `aiPhase` distinto de
+  // 'idle' reemplaza el textarea por un estado ("Listo"), así que quedarse en
+  // 'done' dejaba el campo sin poder escribir hasta cerrarlo y abrirlo otra
+  // vez. Que haya respuesta en pantalla lo dice `respuesta`, no la fase.
+  const [fase, setFase] = useState<'idle' | 'thinking' | 'acting'>('idle')
   const [enviado, setEnviado] = useState('')
   const [respuesta, setRespuesta] = useState('')
   const historial = useRef<{ role: 'user' | 'agent'; text: string }[]>([])
@@ -179,7 +197,12 @@ function Agente(props: HandeiaAgentProps) {
   const onUp = () => {
     const d = drag.current
     drag.current = null
-    if (d && !d.moved) setFieldOpen(v => !v)   // fue clic, no arrastre
+    // Fue clic, no arrastre. Al cerrar se limpia todo (voz incluida), no solo
+    // se oculta — ver cerrarCampo.
+    if (d && !d.moved) {
+      if (fieldOpen) cerrarCampo()
+      else setFieldOpen(true)
+    }
   }
 
   // Las barras del navegador aparecen y desaparecen, y el teclado de móvil se
@@ -211,6 +234,25 @@ function Agente(props: HandeiaAgentProps) {
     setRecSecs(0)
     if (recTimer.current) { clearInterval(recTimer.current); recTimer.current = null }
   }, [])
+
+  /**
+   * Cerrar el campo deja TODO como estaba al abrirlo por primera vez.
+   *
+   * Antes solo se ocultaba: el modo voz seguía encendido, así que al volver a
+   * abrir el círculo el lienzo animado aparecía solo, como si se hubiera
+   * activado por su cuenta. Y peor, el dictado seguía en marcha con el
+   * micrófono abierto detrás de un campo cerrado — lo último que debe hacer
+   * un SDK dentro de la app de otro.
+   */
+  const cerrarCampo = useCallback(() => {
+    pararDictado()
+    setVoiceMode(false)
+    setFieldOpen(false)
+    setEnviado('')
+    setRespuesta('')
+    setPendiente(null)
+    setFase('idle')
+  }, [pararDictado])
 
   const empezarDictado = useCallback(() => {
     // El texto ya escrito se conserva: lo dictado se añade, no lo pisa.
@@ -331,12 +373,12 @@ function Agente(props: HandeiaAgentProps) {
           : data.error === 'cupo_agotado' ? 'Se agotó el uso del asistente por hoy en este espacio.'
           : 'Handeia no pudo responder ahora mismo.',
         )
-        setFase('done')
+        setFase('idle')
         return
       }
     } catch {
       setRespuesta('No pude comunicarme con Handeia.')
-      setFase('done')
+      setFase('idle')
       return
     }
 
@@ -350,30 +392,32 @@ function Agente(props: HandeiaAgentProps) {
         // Esto SÍ es algo que el usuario debe leer: el espacio no sabe hacer
         // lo que se le pidió.
         setRespuesta('Esto requiere una acción que este espacio todavía no sabe ejecutar.')
-        setFase('done')
+        setFase('idle')
         return
       }
       // Lo que escribe se confirma, y ahí sí hay algo que leer antes de
       // decidir — el mismo tratamiento que una respuesta de texto normal.
       if (data.confirm) {
-        setRespuesta(data.text ?? '')
-        setFase('done')
+        // Con texto vacío no se pinta la capa de respuesta — y los botones de
+        // confirmar viven dentro de ella. Sin este respaldo, una acción que
+        // pide permiso se quedaría esperando una respuesta invisible.
+        setRespuesta(data.text || `¿Hago esto: ${data.action.name}?`)
+        setFase('idle')
         setPendiente({ name: data.action.name, args: data.action.args ?? {} })
         return
       }
       // "Llévame a X" no es una pregunta de texto: no hay nada que el usuario
       // deba leer, así que la pantalla no se desenfoca ni se abre nada — se
-      // ejecuta directo. Antes esto igual pasaba por setFase('done') con el
-      // texto puesto, y esa transición sí llegaba a pintarse un instante
-      // (aunque el turno completo terminara en acción), así que la pantalla
-      // se veía desenfocarse de la nada para una acción pura.
+      // ejecuta directo, sin pasar por poner respuesta. Cuando sí se ponía,
+      // esa transición alcanzaba a pintarse un instante aunque el turno
+      // terminara en acción, y la pantalla se desenfocaba de la nada.
       await ejecutar(data.action.name, data.action.args ?? {}, mensaje)
       return
     }
 
     // Sin acción: es una pregunta de texto normal, con su blur de siempre.
     setRespuesta(data.text ?? '')
-    setFase('done')
+    setFase('idle')
   }, [base, props])
 
   const ejecutar = useCallback(async (name: string, args: Record<string, unknown>, mensaje: string) => {
@@ -463,7 +507,10 @@ function Agente(props: HandeiaAgentProps) {
   // hacia blanco o negro. Sin el lavado, una respuesta cae sobre lo que haya
   // detrás —un vídeo oscuro, una foto— y el texto queda ilegible; el lavado
   // le da contraste sin tener que meter el texto en una tarjeta.
-  const conBlur = fase === 'thinking' || (fase === 'done' && !!respuesta)
+  // Depende de que HAYA respuesta, no de una fase "done": el campo vuelve a
+  // `idle` en cuanto termina el turno (para poder escribir otra vez) y la
+  // respuesta se queda en pantalla hasta que se cierre o se pregunte de nuevo.
+  const conBlur = fase === 'thinking' || !!respuesta
 
   return createPortal(
     <div className={tema === 'dark' ? 'dark' : undefined}>
@@ -493,13 +540,22 @@ function Agente(props: HandeiaAgentProps) {
           transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
           style={{ position: 'fixed', zIndex: 2147483001, pointerEvents: 'none' }}
         >
-          <span className="absolute bottom-full left-2 mb-1.5 w-5 h-5 rounded-full flex items-center justify-center text-white dark:text-black bg-black dark:bg-white shadow-md ring-2 ring-white dark:ring-[#171717]">
-            <Sparkles className="w-2.5 h-2.5" strokeWidth={2.2} />
+          {/* Avatar de la IA, como en Handeia: un puntero de color con
+              "alguien" encima se lee como una presencia moviéndose, no como
+              una flecha decorativa. El violeta es el mismo de la identidad de
+              voz del campo, así el agente se ve como una sola cosa. */}
+          <span
+            className="absolute bottom-full left-2 mb-1.5 w-5 h-5 rounded-full flex items-center justify-center text-white ring-2 ring-white dark:ring-[#171717]"
+            style={{ backgroundColor: CURSOR_COLOR, boxShadow: `0 2px 8px -1px ${CURSOR_COLOR}99` }}
+          >
+            <Sparkles className="w-2.5 h-2.5" strokeWidth={2.4} />
           </span>
-          <svg width="22" height="26" viewBox="0 0 22 26" className="text-black dark:text-white" style={{ filter: 'drop-shadow(0 3px 6px rgba(0,0,0,0.35))' }}>
+          <svg width="22" height="26" viewBox="0 0 22 26" style={{ filter: 'drop-shadow(0 3px 6px rgba(0,0,0,0.35))' }}>
             <path
               d="M2 1.5L2 20.5L7 16.3L10 24L13.3 22.6L10.3 15.2L18 15.2L2 1.5Z"
-              fill="currentColor" className="stroke-white dark:stroke-[#171717]" strokeWidth="1.4" strokeLinejoin="round" strokeLinecap="round"
+              fill={CURSOR_COLOR}
+              className="stroke-white dark:stroke-[#171717]"
+              strokeWidth="1.4" strokeLinejoin="round" strokeLinecap="round"
             />
           </svg>
         </motion.div>
@@ -517,7 +573,7 @@ function Agente(props: HandeiaAgentProps) {
           en vez de una medición, y el scroll de la respuesta terminaba
           empujando o tapando el campo). */}
       <AnimatePresence>
-        {fase === 'done' && respuesta && campoTop !== null && (
+        {respuesta && campoTop !== null && (
           <motion.div
             key={enviado}
             initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
@@ -575,7 +631,7 @@ function Agente(props: HandeiaAgentProps) {
           >
             <div ref={campoRef} className="relative flex flex-col justify-end" style={{ maxHeight: maxAlto }}>
               <button
-                onClick={() => { setFieldOpen(false); setEnviado(''); setRespuesta(''); setFase('idle') }}
+                onClick={cerrarCampo}
                 aria-label="Cerrar"
                 className="absolute -top-2.5 -right-2.5 z-10 w-6 h-6 rounded-full flex items-center justify-center text-white dark:text-black bg-black dark:bg-white shadow-[0_4px_14px_-2px_rgba(0,0,0,0.4)] transition-transform hover:scale-110 active:scale-95"
               >

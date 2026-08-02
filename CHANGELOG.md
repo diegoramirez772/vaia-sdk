@@ -5,6 +5,32 @@ Este paquete sigue [SemVer](https://semver.org/lang/es/).
 
 ---
 
+## [0.7.4] — 2026-08-01
+
+### Corregido — el modo voz seguía encendido al reabrir el campo
+
+Cerrar solo ocultaba: `voiceMode` se quedaba activo, así que al volver a abrir
+el círculo el lienzo animado aparecía solo, como si se hubiera encendido por su
+cuenta. Y peor, el dictado seguía corriendo con el micrófono abierto detrás de
+un campo cerrado — lo último que debe hacer un SDK dentro de la app de otro.
+Ahora cerrar deja todo como estaba al abrirlo por primera vez.
+
+### Corregido — no se podía escribir después de una respuesta
+
+`aiPhase` distinto de `idle` reemplaza el textarea por un estado ("Listo"), y
+la fase se quedaba en `done` al terminar el turno: había que cerrar y abrir el
+campo para volver a escribir. La fase vuelve a `idle` en cuanto termina; que
+haya respuesta en pantalla lo dice `respuesta`, no la fase.
+
+### Cambiado — el cursor lleva color y avatar
+
+Puntero violeta con el avatar de la IA encima, en vez de blanco/negro plano —
+se lee como una presencia moviéndose, no como una flecha decorativa. Color
+fijo, no del espacio anfitrión: el cursor representa a Handeia actuando dentro
+de la app de otro, y tomar el color del anfitrión lo confundiría con su UI.
+
+---
+
 ## [0.7.3] — 2026-08-01
 
 ### Añadido — getAuthHeader, para cuando la cookie de sesión no cruza de sitio

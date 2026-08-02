@@ -1,6 +1,6 @@
 {
   "name": "@vaia-lab/sdk",
-  "version": "0.7.3",
+  "version": "0.7.4",
   "description": "VAIA SDK — platform integration for Gandia-7 and Handeia developers",
   "author": "VAIA <hello@vaia.dev>",
   "license": "MIT",
