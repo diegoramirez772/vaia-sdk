@@ -5,6 +5,37 @@ Este paquete sigue [SemVer](https://semver.org/lang/es/).
 
 ---
 
+## [0.7.5] — 2026-08-01
+
+### Corregido — el modo voz se ponía a grabar solo
+
+El botón de onda y el del micrófono son cosas distintas y volvieron a serlo:
+la onda enciende el lienzo de voz, el micrófono dicta. Atarlos (0.7.0) hacía
+que abrir el modo voz empezara a grabar sin que nadie lo pidiera. Apagar el
+modo voz sí corta un dictado en curso — dejar el micrófono abierto sin su
+lienzo sería peor.
+
+### Añadido — el texto del modelo se ve con formato
+
+El modelo escribe en Markdown y se pintaba como un párrafo crudo: asteriscos y
+guiones a la vista, todo pegado. `TextoRico` renderiza negritas, cursivas,
+código, listas, títulos y separadores construyendo elementos de React —
+NUNCA `dangerouslySetInnerHTML`: esto vive dentro de la app de otro y pinta
+texto que viene de un modelo. Subconjunto propio en vez de meterle una
+librería de Markdown entera a quien instala el paquete.
+
+### Añadido — "Nube de Handeia" y "Conectores" llevan a algún lado
+
+Los dos botones del menú de adjuntar no hacían nada. Ahora abren Handeia en la
+sección correspondiente, en pestaña nueva (`?nav=archivos` / `?nav=conectores`)
+para no sacar al usuario del espacio donde está.
+
+Adjuntar desde dispositivo o cámara sigue sin funcionar a propósito:
+`AgentTurnRequest` es solo texto, no hay forma de que un archivo viaje al
+agente. Es una función por construir, no un cable suelto.
+
+---
+
 ## [0.7.4] — 2026-08-01
 
 ### Corregido — el modo voz seguía encendido al reabrir el campo

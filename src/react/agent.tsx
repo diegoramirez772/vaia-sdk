@@ -21,6 +21,7 @@ import { LimiteDeError } from './limite-error.js'
 import { motion, AnimatePresence } from 'motion/react'
 import { Sparkles, X } from 'lucide-react'
 import { InputBar, MODELS } from './input-bar.js'
+import { TextoRico } from './texto-rico.js'
 import { AGENT_PROTOCOL_VERSION } from '../agent.js'
 import type {
   AgentAction, AgentActionResult, AgentSpaceContext, AgentTurnResponse,
@@ -590,7 +591,9 @@ function Agente(props: HandeiaAgentProps) {
           >
             <div className="w-full max-w-[640px] max-h-full overflow-y-auto pointer-events-auto flex flex-col items-center gap-2 text-center px-2 py-4">
               <p className="text-[11px] uppercase tracking-[0.15em] text-black/30 dark:text-white/55 truncate max-w-full">{enviado}</p>
-              <p className="text-[17px] text-black/85 dark:text-white/92 tracking-[-0.02em] leading-relaxed">{respuesta}</p>
+              <div className="text-[17px] text-black/85 dark:text-white/92 tracking-[-0.02em] leading-relaxed w-full">
+                <TextoRico texto={respuesta} />
+              </div>
 
               {pendiente && (
                 <div className="mt-1 flex items-center gap-2 shrink-0">
@@ -654,19 +657,26 @@ function Agente(props: HandeiaAgentProps) {
                   placeholder={props.placeholder ?? 'Pregúntale a Handeia…'}
                   model={model}
                   onModelChange={setModel}
+                  // "Nube de Handeia" y "Conectores" son de Handeia, no del
+                  // espacio: se abren allá, en pestaña nueva, para no sacar al
+                  // usuario de lo que está haciendo aquí. rel noopener porque
+                  // esto corre dentro de la app de un tercero.
+                  onCloudOpen={() => window.open(`${base}/sistema?nav=archivos`, '_blank', 'noopener,noreferrer')}
+                  onNavigateConnectors={() => window.open(`${base}/sistema?nav=conectores`, '_blank', 'noopener,noreferrer')}
                   // Voz: el lienzo animado del campo y el dictado. Solo se
                   // ofrece si el navegador sabe dictar — un botón que no hace
                   // nada es peor que no tenerlo.
                   {...(hayDictado() ? {
                     voiceMode,
-                    // Encender modo voz ARRANCA a escuchar de una vez — antes
-                    // solo prendía el lienzo animado y el micrófono se quedaba
-                    // esperando un segundo clic aparte, que se sentía como que
-                    // "no hacía nada". Apagarlo para el dictado en curso.
+                    // Los dos botones son cosas distintas y no se disparan
+                    // entre sí: el micrófono dicta, la onda enciende el
+                    // lienzo de voz. Atarlos hacía que abrir el modo voz se
+                    // pusiera a grabar solo, sin que nadie lo pidiera.
+                    // Apagarlo sí corta un dictado en curso — dejar el
+                    // micrófono abierto sin su lienzo sería peor.
                     onVoiceModeToggle: () => {
                       setVoiceMode(v => {
                         if (v) pararDictado()
-                        else empezarDictado()
                         return !v
                       })
                     },
