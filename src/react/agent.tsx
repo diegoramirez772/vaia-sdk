@@ -19,7 +19,7 @@ import { useShadowRoot, useTemaDelHost } from './estilos.js'
 import { iniciarDictado, hayDictado, type SpeechRec } from './voz.js'
 import { LimiteDeError } from './limite-error.js'
 import { motion, AnimatePresence } from 'motion/react'
-import { Sparkles, X } from 'lucide-react'
+import { Move, Sparkles, X } from 'lucide-react'
 import { InputBar, MODELS } from './input-bar.js'
 import { TextoRico } from './texto-rico.js'
 import { AGENT_PROTOCOL_VERSION } from '../agent.js'
@@ -205,6 +205,57 @@ function Agente(props: HandeiaAgentProps) {
       else setFieldOpen(true)
     }
   }
+
+  // ── Arrastrar el campo abierto ─────────────────────────────────────────────
+  //
+  // Antes solo se arrastraba el círculo: para mover el campo había que
+  // cerrarlo, arrastrar y volver a abrirlo. Se mueve la MISMA posición
+  // (`pos`), así que campo y círculo siguen siendo una sola cosa y el acotado
+  // que ya impedía salirse de pantalla sigue aplicando igual.
+  //
+  // No arranca sobre lo que se puede tocar (textarea, botones, enlaces): ahí
+  // el gesto es escribir, seleccionar texto o pulsar, y robárselo para mover
+  // haría el campo inusable.
+  const arrastrable = (target: EventTarget | null): boolean => {
+    const el = target as HTMLElement | null
+    return !el?.closest?.('textarea, input, button, a, [role="button"]')
+  }
+
+  const onFieldDown = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (!arrastrable(e.target)) return
+    const vv = window.visualViewport
+    const w = vv?.width ?? window.innerWidth
+    const h = vv?.height ?? window.innerHeight
+    drag.current = {
+      startX: e.clientX, startY: e.clientY,
+      // Sin arrastrar todavía, el círculo vive en su esquina por CSS: se
+      // convierte a coordenadas para que el primer arrastre no dé un salto.
+      origX: pos?.x ?? w - CIRCLE_SIZE - 20,
+      origY: pos?.y ?? h - CIRCLE_SIZE - 20,
+      moved: false,
+    }
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }
+
+  const onFieldMove = (e: React.PointerEvent<HTMLButtonElement>) => {
+    const d = drag.current
+    if (!d) return
+    const dx = e.clientX - d.startX
+    const dy = e.clientY - d.startY
+    if (!d.moved && Math.hypot(dx, dy) < 6) return
+    d.moved = true
+    const { x, y } = acotar(d.origX + dx, d.origY + dy)
+    const vv = window.visualViewport
+    setPos({
+      x, y,
+      openLeft: x > (vv?.width ?? window.innerWidth) / 2,
+      openAbove: y > (vv?.height ?? window.innerHeight) / 2,
+    })
+  }
+
+  // Soltar no abre ni cierra nada: el campo ya está abierto y un clic en su
+  // fondo no debería hacerle nada.
+  const onFieldUp = () => { drag.current = null }
 
   // Las barras del navegador aparecen y desaparecen, y el teclado de móvil se
   // come media pantalla: una posición válida deja de serlo sola. Se guarda el
@@ -633,6 +684,20 @@ function Agente(props: HandeiaAgentProps) {
             }}
           >
             <div ref={campoRef} className="relative flex flex-col justify-end" style={{ maxHeight: maxAlto }}>
+              {/* Tirador para mover el campo sin cerrarlo. Va en su propio
+                  botón y no sobre todo el campo a propósito: `touch-none` en
+                  el contenedor entero mataría el desplazamiento del textarea
+                  en móvil, y robar el gesto sobre el texto impediría
+                  seleccionar. Espejo de la X, al otro lado. */}
+              <button
+                onPointerDown={onFieldDown}
+                onPointerMove={onFieldMove}
+                onPointerUp={onFieldUp}
+                aria-label="Mover el campo"
+                className="absolute -top-2.5 -left-2.5 z-10 w-6 h-6 rounded-full flex items-center justify-center text-white dark:text-black bg-black dark:bg-white shadow-[0_4px_14px_-2px_rgba(0,0,0,0.4)] transition-transform hover:scale-110 active:scale-95 touch-none cursor-grab active:cursor-grabbing"
+              >
+                <Move className="w-3 h-3" strokeWidth={2.2} />
+              </button>
               <button
                 onClick={cerrarCampo}
                 aria-label="Cerrar"

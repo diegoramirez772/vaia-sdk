@@ -492,7 +492,12 @@ export function InputBar({
 
         {/* Hidden file inputs */}
         <input ref={fileRef}    type="file"                        className="hidden" onChange={handleFileChange} />
-        <input ref={camRef}     type="file" accept="image/*,video/*" className="hidden" onChange={handleFileChange} />
+        {/* capture: abre la cámara DIRECTO en vez del selector de archivos. Sin
+            él, "Cámara / imagen" mostraba la misma hoja de elegir archivo que
+            el botón de al lado, y había que buscar la cámara ahí dentro. En
+            escritorio el atributo se ignora y cae al selector, que es lo
+            correcto ahí. */}
+        <input ref={camRef}     type="file" accept="image/*,video/*" capture="environment" className="hidden" onChange={handleFileChange} />
         <input ref={pubFileRef} type="file"                        className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) onPubFileSelected?.(f); e.target.value = ""; }} />
 
         <AnimatePresence mode="wait" initial={false}>

@@ -5,6 +5,29 @@ Este paquete sigue [SemVer](https://semver.org/lang/es/).
 
 ---
 
+## [0.7.6] — 2026-08-01
+
+### Añadido — el campo se mueve sin cerrarlo
+
+Tirador propio arriba a la izquierda, espejo de la X. Antes solo se arrastraba
+el círculo: mover el campo obligaba a cerrarlo, arrastrar y volver a abrirlo.
+
+Va en su propio botón y no sobre todo el campo a propósito: `touch-none` en el
+contenedor entero mataría el desplazamiento del textarea en móvil, y robar el
+gesto sobre el texto impediría seleccionar. Mueve la MISMA posición que el
+círculo, así que los dos siguen siendo una sola cosa y el acotado que ya
+impedía salirse de pantalla aplica igual.
+
+### Corregido — "Cámara / imagen" no abría la cámara
+
+Faltaba `capture` en el input: mostraba la misma hoja de elegir archivo que el
+botón de al lado, y había que buscar la cámara ahí dentro. En escritorio el
+atributo se ignora y cae al selector, que es lo correcto ahí.
+
+Sigue sin poder enviarse lo que se capture — `AgentTurnRequest` es solo texto.
+
+---
+
 ## [0.7.5] — 2026-08-01
 
 ### Corregido — el modo voz se ponía a grabar solo
