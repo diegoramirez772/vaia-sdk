@@ -19,7 +19,7 @@ import { useShadowRoot, useTemaDelHost } from './estilos.js'
 import { iniciarDictado, hayDictado, type SpeechRec } from './voz.js'
 import { LimiteDeError } from './limite-error.js'
 import { motion, AnimatePresence } from 'motion/react'
-import { Move, Sparkles, X } from 'lucide-react'
+import { Sparkles, X } from 'lucide-react'
 import { InputBar, MODELS } from './input-bar.js'
 import { TextoRico } from './texto-rico.js'
 import { AGENT_PROTOCOL_VERSION } from '../agent.js'
@@ -150,6 +150,12 @@ function Agente(props: HandeiaAgentProps) {
   // apenas el usuario escribe una segunda línea.
   const [campoTop, setCampoTop] = useState<number | null>(null)
 
+  // Solo mientras se arrastra de verdad. Puesto siempre, `touch-none` mataría
+  // el desplazamiento del textarea en móvil; puesto solo aquí, para cuando se
+  // activa el dedo ya lleva quieto la espera completa y el navegador no ha
+  // empezado a desplazar nada.
+  const [arrastrando, setArrastrando] = useState(false)
+
   // Cursor caminando hasta la acción — mismo lenguaje que Handeia usa para
   // activar sus propios artefactos. `key` fuerza un remount por caminata:
   // así `initial`→`animate` de framer-motion siempre anima desde el punto de
@@ -213,20 +219,29 @@ function Agente(props: HandeiaAgentProps) {
   // (`pos`), así que campo y círculo siguen siendo una sola cosa y el acotado
   // que ya impedía salirse de pantalla sigue aplicando igual.
   //
-  // No arranca sobre lo que se puede tocar (textarea, botones, enlaces): ahí
-  // el gesto es escribir, seleccionar texto o pulsar, y robárselo para mover
-  // haría el campo inusable.
-  const arrastrable = (target: EventTarget | null): boolean => {
-    const el = target as HTMLElement | null
-    return !el?.closest?.('textarea, input, button, a, [role="button"]')
+  // Se mueve dejándolo PRESIONADO, en cualquier parte del campo — sin
+  // tirador ni zona secreta. La espera es lo que evita el choque con todo lo
+  // demás: escribir, seleccionar texto o desplazar son gestos que empiezan
+  // de inmediato, así que si el dedo (o el cursor) se queda quieto un
+  // momento, la intención es mover.
+  //
+  // Sobre botones y enlaces no arranca: ahí el gesto es pulsar, y un botón
+  // que hay que soltar rápido para que funcione se siente roto.
+  const ESPERA_MS = 350
+  const tempArrastre = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const cancelarEspera = () => {
+    if (tempArrastre.current) { clearTimeout(tempArrastre.current); tempArrastre.current = null }
   }
 
-  const onFieldDown = (e: React.PointerEvent<HTMLButtonElement>) => {
-    if (!arrastrable(e.target)) return
+  const onFieldDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    const el = e.target as HTMLElement | null
+    if (el?.closest?.('button, a, [role="button"]')) return
+
     const vv = window.visualViewport
     const w = vv?.width ?? window.innerWidth
     const h = vv?.height ?? window.innerHeight
-    drag.current = {
+    const inicio = {
       startX: e.clientX, startY: e.clientY,
       // Sin arrastrar todavía, el círculo vive en su esquina por CSS: se
       // convierte a coordenadas para que el primer arrastre no dé un salto.
@@ -234,15 +249,30 @@ function Agente(props: HandeiaAgentProps) {
       origY: pos?.y ?? h - CIRCLE_SIZE - 20,
       moved: false,
     }
-    e.currentTarget.setPointerCapture(e.pointerId)
+    const id = e.pointerId
+    const nodo = e.currentTarget
+
+    cancelarEspera()
+    tempArrastre.current = setTimeout(() => {
+      drag.current = inicio
+      setArrastrando(true)
+      // Se captura al cumplirse la espera, no antes: capturar de entrada le
+      // robaría al textarea el foco y la selección en gestos que no eran
+      // para mover.
+      try { nodo.setPointerCapture(id) } catch { /* el puntero ya se fue */ }
+    }, ESPERA_MS)
   }
 
-  const onFieldMove = (e: React.PointerEvent<HTMLButtonElement>) => {
+  const onFieldMove = (e: React.PointerEvent<HTMLDivElement>) => {
     const d = drag.current
-    if (!d) return
+    if (!d) {
+      // Todavía en la espera: si se mueve antes de tiempo, no era para
+      // mover — era desplazar o seleccionar. Se cancela y se deja en paz.
+      if (tempArrastre.current) cancelarEspera()
+      return
+    }
     const dx = e.clientX - d.startX
     const dy = e.clientY - d.startY
-    if (!d.moved && Math.hypot(dx, dy) < 6) return
     d.moved = true
     const { x, y } = acotar(d.origX + dx, d.origY + dy)
     const vv = window.visualViewport
@@ -253,9 +283,13 @@ function Agente(props: HandeiaAgentProps) {
     })
   }
 
-  // Soltar no abre ni cierra nada: el campo ya está abierto y un clic en su
-  // fondo no debería hacerle nada.
-  const onFieldUp = () => { drag.current = null }
+  // Soltar no abre ni cierra nada: el campo ya está abierto y tocar su fondo
+  // no debería hacerle nada.
+  const onFieldUp = () => {
+    cancelarEspera()
+    drag.current = null
+    setArrastrando(false)
+  }
 
   // Las barras del navegador aparecen y desaparecen, y el teclado de móvil se
   // come media pantalla: una posición válida deja de serlo sola. Se guarda el
@@ -683,21 +717,15 @@ function Agente(props: HandeiaAgentProps) {
               zIndex: 2147483000,
             }}
           >
-            <div ref={campoRef} className="relative flex flex-col justify-end" style={{ maxHeight: maxAlto }}>
-              {/* Tirador para mover el campo sin cerrarlo. Va en su propio
-                  botón y no sobre todo el campo a propósito: `touch-none` en
-                  el contenedor entero mataría el desplazamiento del textarea
-                  en móvil, y robar el gesto sobre el texto impediría
-                  seleccionar. Espejo de la X, al otro lado. */}
-              <button
-                onPointerDown={onFieldDown}
-                onPointerMove={onFieldMove}
-                onPointerUp={onFieldUp}
-                aria-label="Mover el campo"
-                className="absolute -top-2.5 -left-2.5 z-10 w-6 h-6 rounded-full flex items-center justify-center text-white dark:text-black bg-black dark:bg-white shadow-[0_4px_14px_-2px_rgba(0,0,0,0.4)] transition-transform hover:scale-110 active:scale-95 touch-none cursor-grab active:cursor-grabbing"
-              >
-                <Move className="w-3 h-3" strokeWidth={2.2} />
-              </button>
+            <div
+              ref={campoRef}
+              onPointerDown={onFieldDown}
+              onPointerMove={onFieldMove}
+              onPointerUp={onFieldUp}
+              onPointerCancel={onFieldUp}
+              className={`relative flex flex-col justify-end ${arrastrando ? 'touch-none select-none cursor-grabbing' : ''}`}
+              style={{ maxHeight: maxAlto }}
+            >
               <button
                 onClick={cerrarCampo}
                 aria-label="Cerrar"

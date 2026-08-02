@@ -5,6 +5,24 @@ Este paquete sigue [SemVer](https://semver.org/lang/es/).
 
 ---
 
+## [0.7.7] — 2026-08-01
+
+### Cambiado — el campo se mueve dejándolo presionado, sin tirador
+
+Fuera el botón de mover que traía 0.7.6. Se deja presionado en cualquier parte
+del campo (dedo o cursor) y se arrastra.
+
+La espera de 350 ms es lo que evita el choque con todo lo demás: escribir,
+seleccionar o desplazar son gestos que empiezan de inmediato, así que si el
+puntero se queda quieto un momento la intención es mover. Si se mueve antes de
+tiempo, se cancela y el gesto sigue siendo el suyo. `touch-none` se pone SOLO
+mientras se arrastra — puesto siempre mataría el desplazamiento del textarea en
+móvil.
+
+Sobre botones y enlaces no arranca: ahí el gesto es pulsar.
+
+---
+
 ## [0.7.6] — 2026-08-01
 
 ### Añadido — el campo se mueve sin cerrarlo
