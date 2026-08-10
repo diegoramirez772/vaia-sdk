@@ -86,3 +86,37 @@ export function iniciarDictado(
   try { rec.start() } catch { return null }
   return rec
 }
+
+/**
+ * Lee texto en voz alta con el sintetizador del navegador — mismo principio
+ * que el dictado de arriba: nada sale del dispositivo, no hay llamada a
+ * ningún servidor. `alTerminar` avisa cuando termina (o falla, o se
+ * canceló) para que quien llama pueda encadenar el siguiente paso, como
+ * volver a escuchar.
+ */
+export function hablar(texto: string, alTerminar: () => void): void {
+  const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined
+  if (!synth || !texto.trim()) { alTerminar(); return }
+  synth.cancel()
+  const utter = new SpeechSynthesisUtterance(texto)
+  utter.lang = document.documentElement.lang || 'es-ES'
+  const voz = synth.getVoices().find(v => v.lang?.startsWith(utter.lang.slice(0, 2)))
+  if (voz) utter.voice = voz
+  utter.onend = alTerminar
+  utter.onerror = alTerminar
+  synth.speak(utter)
+  synth.resume()
+}
+
+/**
+ * Corta lo que se esté leyendo, si acaso. Según el navegador, esto puede
+ * disparar el `alTerminar` del `hablar()` en curso (Chrome lo hace vía
+ * `onerror`) — quien llame a esto debe apagar su propia bandera de "sigo en
+ * modo voz" ANTES de invocarlo, así ese callback no intenta seguir la
+ * conversación con algo que el usuario acaba de cortar.
+ */
+export function pararHabla(): void {
+  const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined
+  if (!synth) return
+  synth.cancel()
+}

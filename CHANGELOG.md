@@ -5,6 +5,33 @@ Este paquete sigue [SemVer](https://semver.org/lang/es/).
 
 ---
 
+## [0.8.0] — 2026-08-09
+
+### Añadido — modo voz de verdad: conversación completa, no solo un lienzo animado
+
+Antes "modo voz" solo encendía `VoiceCanvas`, el lienzo que reacciona al
+volumen del mic — no leía nada, no volvía a escuchar, no llevaba a ningún
+lado. Ahora sí sostiene una conversación: cuando llega una respuesta con el
+modo activo, se lee con `speechSynthesis` (nada sale del dispositivo, mismo
+principio que el dictado — ver `voz.ts`), y en cuanto termina de hablar
+vuelve a escuchar sola si el modo sigue activo. Apagar el modo corta lo que
+se esté leyendo, igual que ya cortaba un dictado en curso.
+
+El dictado y el modo voz siguen siendo botones independientes a propósito
+(la decisión de 0.5.x sigue en pie: activar el modo voz no arranca a
+grabar solo). Lo nuevo es que terminar de hablar SÍ arranca a escuchar —
+un disparador distinto, sin reabrir el bug que aquella decisión evitaba.
+
+Las confirmaciones pendientes (`data.confirm`) se leen pero no reescuchan:
+un "sí" dictado cae en el campo de texto, no en los botones de
+confirmar/cancelar, así que reabrir el mic ahí prometería algo que el SDK
+todavía no cumple.
+
+Nada de esto toca `voz.ts`'s `iniciarDictado`/`hayDictado` ni el botón de
+dictar — siguen exactamente igual.
+
+---
+
 ## [0.7.7] — 2026-08-01
 
 ### Cambiado — el campo se mueve dejándolo presionado, sin tirador

@@ -16,7 +16,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useShadowRoot, useTemaDelHost } from './estilos.js'
-import { iniciarDictado, hayDictado, type SpeechRec } from './voz.js'
+import { iniciarDictado, hayDictado, hablar, pararHabla, type SpeechRec } from './voz.js'
 import { LimiteDeError } from './limite-error.js'
 import { motion, AnimatePresence } from 'motion/react'
 import { Sparkles, X } from 'lucide-react'
@@ -164,8 +164,12 @@ function Agente(props: HandeiaAgentProps) {
   const [accionLabel, setAccionLabel] = useState('')
 
   // Voz. `voiceMode` enciende el lienzo animado del campo (el de Handeia);
-  // `grabando` es el dictado en marcha.
+  // `grabando` es el dictado en marcha. `voiceModeRef` sigue a `voiceMode`
+  // en vivo — lo necesita el callback de `hablar()` (que llega después de
+  // que React ya re-renderizó, a veces varios turnos después) para saber si
+  // debe volver a escuchar sin depender de una closure vieja.
   const [voiceMode, setVoiceMode] = useState(false)
+  const voiceModeRef = useRef(false)
   const [grabando, setGrabando] = useState(false)
   const [recSecs, setRecSecs] = useState(0)
   const recTimer = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -332,6 +336,8 @@ function Agente(props: HandeiaAgentProps) {
    */
   const cerrarCampo = useCallback(() => {
     pararDictado()
+    voiceModeRef.current = false
+    pararHabla()
     setVoiceMode(false)
     setFieldOpen(false)
     setEnviado('')
@@ -419,6 +425,22 @@ function Agente(props: HandeiaAgentProps) {
     })
   }, [props])
 
+  // Modo voz de verdad: lee la respuesta y, si el modo sigue activo cuando
+  // termina de hablar, vuelve a escuchar sola — así se sostiene una
+  // conversación completa por voz con un solo botón, en vez de un lector que
+  // no lleva a ningún lado. No se dispara si el modo está apagado (el botón
+  // de dictado sigue siendo independiente para quien solo quiere dictar).
+  const decirYQuizasEscuchar = useCallback((texto: string, reescuchar = true) => {
+    if (!voiceModeRef.current) return
+    hablar(texto, () => {
+      // Una confirmación pendiente (¿hago esto: X?) se lee, pero no vuelve a
+      // escuchar sola — un "sí" dictado caería en el campo de texto, no en
+      // los botones de confirmar/cancelar, así que reabrir el mic ahí
+      // prometería algo que el SDK todavía no sabe cumplir.
+      if (reescuchar && voiceModeRef.current) empezarDictado()
+    })
+  }, [empezarDictado])
+
   // ── Un turno contra Handeia ────────────────────────────────────────────────
   const turno = useCallback(async (mensaje: string, actionResult?: AgentActionResult) => {
     let context: AgentSpaceContext | undefined
@@ -453,17 +475,20 @@ function Agente(props: HandeiaAgentProps) {
       })
       data = await res.json()
       if (!res.ok || data.ok === false) {
-        setRespuesta(
+        const texto =
           data.error === 'no_autenticado' ? 'Inicia sesión en Handeia para usar el asistente.'
           : data.error === 'espacio_no_instalado' ? 'Este espacio no está instalado en tu Handeia.'
           : data.error === 'cupo_agotado' ? 'Se agotó el uso del asistente por hoy en este espacio.'
-          : 'Handeia no pudo responder ahora mismo.',
-        )
+          : 'Handeia no pudo responder ahora mismo.'
+        setRespuesta(texto)
+        decirYQuizasEscuchar(texto)
         setFase('idle')
         return
       }
     } catch {
-      setRespuesta('No pude comunicarme con Handeia.')
+      const texto = 'No pude comunicarme con Handeia.'
+      setRespuesta(texto)
+      decirYQuizasEscuchar(texto)
       setFase('idle')
       return
     }
@@ -477,7 +502,9 @@ function Agente(props: HandeiaAgentProps) {
       if (!props.onAction) {
         // Esto SÍ es algo que el usuario debe leer: el espacio no sabe hacer
         // lo que se le pidió.
-        setRespuesta('Esto requiere una acción que este espacio todavía no sabe ejecutar.')
+        const texto = 'Esto requiere una acción que este espacio todavía no sabe ejecutar.'
+        setRespuesta(texto)
+        decirYQuizasEscuchar(texto)
         setFase('idle')
         return
       }
@@ -487,7 +514,9 @@ function Agente(props: HandeiaAgentProps) {
         // Con texto vacío no se pinta la capa de respuesta — y los botones de
         // confirmar viven dentro de ella. Sin este respaldo, una acción que
         // pide permiso se quedaría esperando una respuesta invisible.
-        setRespuesta(data.text || `¿Hago esto: ${data.action.name}?`)
+        const texto = data.text || `¿Hago esto: ${data.action.name}?`
+        setRespuesta(texto)
+        decirYQuizasEscuchar(texto, false)
         setFase('idle')
         setPendiente({ name: data.action.name, args: data.action.args ?? {} })
         return
@@ -503,8 +532,9 @@ function Agente(props: HandeiaAgentProps) {
 
     // Sin acción: es una pregunta de texto normal, con su blur de siempre.
     setRespuesta(data.text ?? '')
+    decirYQuizasEscuchar(data.text ?? '')
     setFase('idle')
-  }, [base, props])
+  }, [base, props, decirYQuizasEscuchar])
 
   const ejecutar = useCallback(async (name: string, args: Record<string, unknown>, mensaje: string) => {
     const declarada = props.actions?.find(a => a.name === name)
@@ -689,7 +719,7 @@ function Agente(props: HandeiaAgentProps) {
                     Hacerlo
                   </button>
                   <button
-                    onClick={() => { setPendiente(null); setRespuesta('Cancelado.') }}
+                    onClick={() => { setPendiente(null); setRespuesta('Cancelado.'); decirYQuizasEscuchar('Cancelado.') }}
                     className="h-8 px-4 rounded-full border border-black/[0.12] dark:border-white/[0.18] text-black/70 dark:text-white/85 text-[12px]"
                   >
                     Cancelar
@@ -766,11 +796,27 @@ function Agente(props: HandeiaAgentProps) {
                     // lienzo de voz. Atarlos hacía que abrir el modo voz se
                     // pusiera a grabar solo, sin que nadie lo pidiera.
                     // Apagarlo sí corta un dictado en curso — dejar el
-                    // micrófono abierto sin su lienzo sería peor.
+                    // micrófono abierto sin su lienzo sería peor. Y ahora
+                    // también corta la síntesis en curso: un mic cerrado con
+                    // Handeia todavía hablando sería la misma inconsistencia.
                     onVoiceModeToggle: () => {
                       setVoiceMode(v => {
-                        if (v) pararDictado()
-                        return !v
+                        const next = !v
+                        voiceModeRef.current = next
+                        if (v) {
+                          pararDictado()
+                          pararHabla()
+                        } else if (respuesta) {
+                          // Ya hay algo en pantalla al prender el modo — se
+                          // lee de una vez, aprovechando el gesto del click
+                          // (que es lo que el navegador exige para la
+                          // primera síntesis). No arranca a grabar sola: eso
+                          // sigue siendo solo del botón de dictado. Si lo que
+                          // hay en pantalla es una confirmación pendiente,
+                          // tampoco reescucha sola (mismo motivo que arriba).
+                          decirYQuizasEscuchar(respuesta, !pendiente)
+                        }
+                        return next
                       })
                     },
                     recording: grabando,
