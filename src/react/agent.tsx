@@ -16,7 +16,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useShadowRoot, useTemaDelHost } from './estilos.js'
-import { iniciarDictado, hayDictado, hablar, pararHabla, type SpeechRec } from './voz.js'
+import { iniciarDictado, hayDictado, hayGrabacion, hablar, pararHabla, type SpeechRec } from './voz.js'
 import { LimiteDeError } from './limite-error.js'
 import { motion, AnimatePresence } from 'motion/react'
 import { Sparkles, X } from 'lucide-react'
@@ -79,6 +79,19 @@ export interface HandeiaAgentProps {
    */
   getActionTarget?: ((name: string, args: Record<string, unknown>) => HTMLElement | null | undefined) | undefined
   placeholder?: string | undefined
+  /**
+   * Transcribe un audio grabado (Dictar y modo voz) a texto. Si se pasa, el
+   * SDK graba con MediaRecorder y le entrega el audio a esta función en vez
+   * de usar el reconocimiento nativo del navegador — igual de disponible en
+   * Firefox/Safari, donde SpeechRecognition no existe, y sin los cortes por
+   * silencio ni las repeticiones que ese reconocimiento arrastra en Chrome.
+   *
+   * Igual que getAuthHeader/onAction: a dónde va el audio y con qué
+   * credenciales es decisión del espacio, nunca del SDK — así se sostiene
+   * que "el SDK no manda audio a ningún lado sin que el dueño del espacio
+   * lo sepa". Sin esto, se usa el dictado nativo del navegador de siempre.
+   */
+  onTranscribeAudio?: ((audio: Blob) => Promise<string>) | undefined
 }
 
 /**
@@ -133,11 +146,6 @@ function Agente(props: HandeiaAgentProps) {
   const [texto, setTexto] = useState('')
   const textoRef = useRef('')
   textoRef.current = texto
-  // `enviarTexto` se define después (depende de `turno`, que depende de
-  // `ejecutar`…), pero `empezarDictado` — definido antes — necesita poder
-  // mandar cuando el navegador corta solo por silencio en modo voz. Un ref
-  // actualizado en cada render evita reordenar toda la cadena de callbacks.
-  const enviarTextoRef = useRef<(t: string, mostrar?: boolean) => void>(() => {})
   const [model, setModel] = useState(MODELS[0]?.id ?? '')
   // Sin 'done': al terminar un turno se vuelve a 'idle'. `aiPhase` distinto de
   // 'idle' reemplaza el textarea por un estado ("Listo"), así que quedarse en
@@ -184,6 +192,13 @@ function Agente(props: HandeiaAgentProps) {
   const [recSecs, setRecSecs] = useState(0)
   const recTimer = useRef<ReturnType<typeof setInterval> | null>(null)
   const dictado = useRef<SpeechRec | null>(null)
+  // Grabación real (MediaRecorder), solo cuando el espacio pasa
+  // onTranscribeAudio — ver abajo dónde se decide cuál de los dos caminos
+  // usar. Vive aparte de `dictado` (nunca los dos a la vez).
+  const grabador = useRef<MediaRecorder | null>(null)
+  const streamAudio = useRef<MediaStream | null>(null)
+  const chunksAudio = useRef<Blob[]>([])
+  const [transcribiendo, setTranscribiendo] = useState(false)
   const [pendiente, setPendiente] = useState<{ name: string; args: Record<string, unknown> } | null>(null)
 
   // ── Arrastre del círculo, igual que en Handeia ─────────────────────────────
@@ -327,7 +342,17 @@ function Agente(props: HandeiaAgentProps) {
   }, [])
 
   // ── Dictado ────────────────────────────────────────────────────────────────
-  const pararDictado = useCallback(() => {
+  // ── Dos caminos para "escuchar": el reconocimiento nativo del navegador
+  // (de siempre, con sus cortes por silencio y sus rarezas de Chrome), o
+  // MediaRecorder + onTranscribeAudio cuando el espacio lo da — mismo audio
+  // real que ya usa Nexus en sus propios campos de texto (ElevenLabs detrás,
+  // pero eso lo decide el espacio, el SDK solo entrega el blob). Con
+  // MediaRecorder no hay "el navegador corta solo por silencio" que
+  // resolver: graba tal cual hasta que se le dice que pare, así que ni el
+  // corte-y-reengancha de abajo ni las repeticiones de acumulación aplican
+  // — desaparecen por construcción, no por parche. ──────────────────────────
+
+  const pararDictadoNativo = useCallback(() => {
     const rec = dictado.current
     if (rec) {
       // Desconecta los callbacks ANTES de stop() — si no, un onresult que ya
@@ -345,6 +370,112 @@ function Agente(props: HandeiaAgentProps) {
     setRecSecs(0)
     if (recTimer.current) { clearInterval(recTimer.current); recTimer.current = null }
   }, [])
+
+  const empezarDictadoNativo = useCallback(() => {
+    // Ya hay una sesión de reconocimiento viva — no abrir una segunda
+    // encima. Dos instancias escuchando a la vez es la otra forma de
+    // terminar con "hola hola hola…": cada una transcribe por su cuenta y
+    // las dos le entran a setTexto.
+    if (dictado.current) return
+    // El texto ya escrito se conserva: lo dictado se añade, no lo pisa.
+    const previo = texto ? texto + ' ' : ''
+    const rec = iniciarDictado(
+      dicho => setTexto(previo + dicho),
+      () => {
+        // Si esto se dispara es porque el navegador cortó SOLO (silencio,
+        // error) — pararDictadoNativo() desconecta este mismo callback
+        // justo antes de cualquier stop() explícito (Cancelar, Enviar, el
+        // botón de modo voz), así que un usuario terminando su turno a
+        // propósito NUNCA pasa por aquí. Se reengancha sola, sin soltar la
+        // vista de grabación ni mostrar nada — "modo audio siempre debe
+        // estar grabando hasta que tú decidas".
+        dictado.current = null
+        if (recTimer.current) { clearInterval(recTimer.current); recTimer.current = null }
+        empezarDictadoNativo()
+      },
+    )
+    if (!rec) return
+    dictado.current = rec
+    setGrabando(true)
+    setRecSecs(0)
+    recTimer.current = setInterval(() => setRecSecs(s => s + 1), 1000)
+  }, [texto])
+
+  const pararGrabacionAudio = useCallback(() => {
+    const rec = grabador.current
+    if (rec) { rec.onstop = null; try { rec.stop() } catch { /* ya estaba parado */ } }
+    streamAudio.current?.getTracks().forEach(t => t.stop())
+    streamAudio.current = null
+    grabador.current = null
+    chunksAudio.current = []
+    setGrabando(false)
+    setRecSecs(0)
+    setTranscribiendo(false)
+    if (recTimer.current) { clearInterval(recTimer.current); recTimer.current = null }
+  }, [])
+
+  const empezarGrabacionAudio = useCallback(async () => {
+    if (grabador.current) return
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      streamAudio.current = stream
+      const rec = new MediaRecorder(stream)
+      chunksAudio.current = []
+      rec.ondataavailable = (e) => { if (e.data.size > 0) chunksAudio.current.push(e.data) }
+      rec.start()
+      grabador.current = rec
+      setGrabando(true)
+      setRecSecs(0)
+      recTimer.current = setInterval(() => setRecSecs(s => s + 1), 1000)
+    } catch {
+      // Sin permiso de mic, o sin dispositivo — no hay nada que hacer, igual
+      // que cuando el navegador no trae reconocimiento nativo.
+    }
+  }, [])
+
+  // Para de grabar Y transcribe — null si no había nada que mandar (sin
+  // audio, permiso negado, o falló la transcripción del espacio).
+  const terminarGrabacionAudio = useCallback((): Promise<string | null> => {
+    return new Promise((resolve) => {
+      const rec = grabador.current
+      const onTranscribeAudio = props.onTranscribeAudio
+      if (!rec || !onTranscribeAudio) { resolve(null); return }
+      rec.onstop = async () => {
+        streamAudio.current?.getTracks().forEach(t => t.stop())
+        streamAudio.current = null
+        grabador.current = null
+        if (recTimer.current) { clearInterval(recTimer.current); recTimer.current = null }
+        setGrabando(false)
+        setRecSecs(0)
+        const blob = new Blob(chunksAudio.current, { type: rec.mimeType || 'audio/webm' })
+        chunksAudio.current = []
+        if (blob.size === 0) { resolve(null); return }
+        setTranscribiendo(true)
+        try {
+          const texto = (await onTranscribeAudio(blob)).trim()
+          resolve(texto || null)
+        } catch {
+          resolve(null)
+        } finally {
+          setTranscribiendo(false)
+        }
+      }
+      rec.stop()
+    })
+  }, [props])
+
+  // Los tres call sites de abajo (mic, modo voz, cerrarCampo) no necesitan
+  // saber cuál de los dos caminos está activo — solo si el espacio dio
+  // onTranscribeAudio decide cuál usar.
+  const empezarDictado = useCallback(() => {
+    if (props.onTranscribeAudio) { void empezarGrabacionAudio(); return }
+    empezarDictadoNativo()
+  }, [props.onTranscribeAudio, empezarGrabacionAudio, empezarDictadoNativo])
+
+  const pararDictado = useCallback(() => {
+    if (props.onTranscribeAudio) { pararGrabacionAudio(); return }
+    pararDictadoNativo()
+  }, [props.onTranscribeAudio, pararGrabacionAudio, pararDictadoNativo])
 
   /**
    * Cerrar el campo deja TODO como estaba al abrirlo por primera vez.
@@ -366,44 +497,6 @@ function Agente(props: HandeiaAgentProps) {
     setPendiente(null)
     setFase('idle')
   }, [pararDictado])
-
-  const empezarDictado = useCallback(() => {
-    // Ya hay una sesión de reconocimiento viva — no abrir una segunda
-    // encima. Dos instancias escuchando a la vez es la otra forma de
-    // terminar con "hola hola hola…": cada una transcribe por su cuenta y
-    // las dos le entran a setTexto.
-    if (dictado.current) return
-    // El texto ya escrito se conserva: lo dictado se añade, no lo pisa.
-    const previo = texto ? texto + ' ' : ''
-    const rec = iniciarDictado(
-      dicho => setTexto(previo + dicho),
-      () => {
-        // Si esto se dispara es porque el navegador cortó SOLO (silencio,
-        // error) — pararDictado() desconecta este mismo callback justo
-        // antes de cualquier stop() explícito (Cancelar, Enviar, el botón
-        // de modo voz), así que un usuario terminando su turno a propósito
-        // NUNCA pasa por aquí.
-        //
-        // "Modo audio siempre debe estar grabando hasta que tú decidas" —
-        // Chrome corta el reconocimiento por su cuenta a los pocos segundos
-        // de silencio aunque `continuous` esté prendido, y antes eso hacía
-        // caer grabando a false: la pantalla volvía al textarea normal y el
-        // dictado completo aparecía ahí, visible — justo lo que no debía
-        // pasar. Ahora se reengancha sola, sin soltar la vista de
-        // grabación ni mostrar nada. Mismo trato para modo voz: el
-        // silencio del navegador ya no se siente como que la conversación
-        // se murió, solo sigue escuchando hasta que tú toques para acabar.
-        dictado.current = null
-        if (recTimer.current) { clearInterval(recTimer.current); recTimer.current = null }
-        empezarDictado()
-      },
-    )
-    if (!rec) return
-    dictado.current = rec
-    setGrabando(true)
-    setRecSecs(0)
-    recTimer.current = setInterval(() => setRecSecs(s => s + 1), 1000)
-  }, [texto])
 
   // Si el componente se va con el micrófono abierto, se cierra. Dejarlo
   // escuchando sería lo peor que puede hacer un SDK.
@@ -610,9 +703,24 @@ function Agente(props: HandeiaAgentProps) {
     historial.current.push({ role: 'user', text: t })
     void turno(t)
   }, [fase, turno])
-  enviarTextoRef.current = enviarTexto
 
   const enviar = useCallback(() => enviarTexto(texto), [texto, enviarTexto])
+
+  // Termina tu turno de voz (mic suelto o modo voz, da igual quién lo
+  // arrancó) y manda — un solo camino para los dos botones. Con
+  // onTranscribeAudio, para de grabar y ESPERA la transcripción antes de
+  // mandar; sin eso, ya está todo en `texto` al momento (dictado nativo,
+  // síncrono) y solo hace falta pararlo.
+  const terminarTurnoDeVoz = useCallback(async () => {
+    if (props.onTranscribeAudio) {
+      const dicho = await terminarGrabacionAudio()
+      if (dicho) enviarTexto(dicho, false)
+      return
+    }
+    const dicho = textoRef.current.trim()
+    pararDictadoNativo()
+    if (dicho) enviarTexto(dicho, false)
+  }, [props.onTranscribeAudio, terminarGrabacionAudio, pararDictadoNativo, enviarTexto])
 
   // El shadow root se crea en un efecto, o sea solo en el navegador. Eso hace
   // de guardia para el render de servidor: Next renderiza los componentes de
@@ -842,10 +950,12 @@ function Agente(props: HandeiaAgentProps) {
                   // esto corre dentro de la app de un tercero.
                   onCloudOpen={() => window.open(`${base}/sistema?nav=archivos`, '_blank', 'noopener,noreferrer')}
                   onNavigateConnectors={() => window.open(`${base}/sistema?nav=conectores`, '_blank', 'noopener,noreferrer')}
-                  // Voz: el lienzo animado del campo y el dictado. Solo se
-                  // ofrece si el navegador sabe dictar — un botón que no hace
-                  // nada es peor que no tenerlo.
-                  {...(hayDictado() ? {
+                  // Voz: el lienzo animado del campo y el dictado. Se ofrece
+                  // si hay reconocimiento nativo O si el espacio da
+                  // onTranscribeAudio (ese camino ni siquiera necesita
+                  // SpeechRecognition — funciona en Firefox/Safari también).
+                  // Un botón que no hace nada es peor que no tenerlo.
+                  {...((hayDictado() || (hayGrabacion() && !!props.onTranscribeAudio)) ? {
                     voiceMode,
                     // Modo voz es UN solo botón para toda la conversación,
                     // no un interruptor aparte del dictado: tocarlo arranca
@@ -858,12 +968,10 @@ function Agente(props: HandeiaAgentProps) {
                     // solo quiere dictar sin conversación.
                     onVoiceModeToggle: () => {
                       if (grabando) {
-                        // Termina tu turno: para de escuchar y manda directo
-                        // lo que se entendió — nunca se muestra como texto,
-                        // ni en el campo (ya no se veía) ni en "enviado".
-                        const dicho = textoRef.current.trim()
-                        pararDictado()
-                        if (dicho) enviarTextoRef.current(dicho, false)
+                        // Termina tu turno: para de escuchar/grabar y manda
+                        // directo lo que se entendió — nunca se muestra
+                        // como texto, ni en el campo ni en "enviado".
+                        void terminarTurnoDeVoz()
                         return
                       }
                       if (hablandoRef.current) {
@@ -876,8 +984,8 @@ function Agente(props: HandeiaAgentProps) {
                       }
                       if (voiceMode) {
                         // Prendido pero ni grabando ni hablando (esperando
-                        // respuesta, o recién prendido sin nada que decir) —
-                        // un tap aquí sale del modo.
+                        // respuesta, transcribiendo, o recién prendido sin
+                        // nada que decir) — un tap aquí sale del modo.
                         voiceModeRef.current = false
                         setVoiceMode(false)
                         return
@@ -893,14 +1001,11 @@ function Agente(props: HandeiaAgentProps) {
                     recordSecs: recSecs,
                     onStartRecording: empezarDictado,
                     onCancelRecording: () => { pararDictado(); setTexto('') },
-                    // Dictar suelto (sin modo voz): para y manda, pero
-                    // tampoco se muestra como texto — "audio" significa
+                    // Dictar suelto (sin modo voz): mismo camino unificado
+                    // que el botón de modo voz — para/transcribe y manda,
+                    // sin mostrar el texto en ningún lado. "Audio" significa
                     // audio, no una transcripción a la vista.
-                    onSendRecording: () => {
-                      const dicho = texto.trim()
-                      pararDictado()
-                      if (dicho) enviarTexto(dicho, false)
-                    },
+                    onSendRecording: () => { void terminarTurnoDeVoz() },
                   } : {})}
                 />
               </div>

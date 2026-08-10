@@ -5,6 +5,40 @@ Este paquete sigue [SemVer](https://semver.org/lang/es/).
 
 ---
 
+## [0.10.0] — 2026-08-09
+
+### Añadido — `onTranscribeAudio`: audio real en vez de reconocimiento nativo
+
+Diego lo pidió directo: que Dictar y modo voz funcionen con la MISMA
+confiabilidad que ya tienen los campos de texto de Nexus (MediaRecorder +
+transcripción real), no con parches sobre `SpeechRecognition` del
+navegador — que en Chrome corta solo por silencio, repite tramos, y en
+Firefox/Safari ni siquiera existe.
+
+Nuevo prop opcional en `HandeiaAgentProps`:
+
+```ts
+onTranscribeAudio?: (audio: Blob) => Promise<string>
+```
+
+Si el espacio lo pasa, el SDK graba con `MediaRecorder` (nunca se detiene
+sola por silencio — graba hasta que el usuario decide parar, así que ni
+"corte solo" ni "repite palabras" pueden pasar, no por parche sino porque
+esos mecanismos ya ni existen en este camino) y le entrega el audio
+completo a esta función al terminar. El espacio decide a dónde va ese
+audio y con qué credenciales — mismo principio que `getAuthHeader`/
+`onAction`: el SDK nunca manda audio a ningún lado por su cuenta.
+
+Sin este prop, todo sigue exactamente igual que en 0.9.x (reconocimiento
+nativo, con sus fixes de esa serie intactos) — retrocompatible con
+cualquier espacio que no lo use.
+
+Dictar y modo voz comparten ahora un solo camino para "terminar tu turno"
+(`terminarTurnoDeVoz`), sin importar cuál de los dos caminos de captura
+esté activo.
+
+---
+
 ## [0.9.2] — 2026-08-09
 
 ### Corregido — el dictado soltaba el texto en el campo cuando el navegador cortaba solo

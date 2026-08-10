@@ -47,6 +47,15 @@ export function hayDictado(): boolean {
   return constructorDeVoz() !== null
 }
 
+/** ¿Se puede grabar audio real (MediaRecorder) en este navegador? Mucho más
+ * disponible que hayDictado() — cubre Firefox y Safari, donde
+ * SpeechRecognition no existe. */
+export function hayGrabacion(): boolean {
+  return typeof window !== 'undefined'
+    && typeof MediaRecorder !== 'undefined'
+    && !!navigator.mediaDevices?.getUserMedia
+}
+
 /**
  * Arranca el dictado.
  *
