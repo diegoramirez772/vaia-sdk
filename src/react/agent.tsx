@@ -131,6 +131,13 @@ function Agente(props: HandeiaAgentProps) {
   const drag = useRef<{ startX: number; startY: number; origX: number; origY: number; moved: boolean } | null>(null)
 
   const [texto, setTexto] = useState('')
+  const textoRef = useRef('')
+  textoRef.current = texto
+  // `enviarTexto` se define después (depende de `turno`, que depende de
+  // `ejecutar`…), pero `empezarDictado` — definido antes — necesita poder
+  // mandar cuando el navegador corta solo por silencio en modo voz. Un ref
+  // actualizado en cada render evita reordenar toda la cadena de callbacks.
+  const enviarTextoRef = useRef<(t: string, mostrar?: boolean) => void>(() => {})
   const [model, setModel] = useState(MODELS[0]?.id ?? '')
   // Sin 'done': al terminar un turno se vuelve a 'idle'. `aiPhase` distinto de
   // 'idle' reemplaza el textarea por un estado ("Listo"), así que quedarse en
@@ -170,6 +177,9 @@ function Agente(props: HandeiaAgentProps) {
   // debe volver a escuchar sin depender de una closure vieja.
   const [voiceMode, setVoiceMode] = useState(false)
   const voiceModeRef = useRef(false)
+  // Si Handeia está hablando ahora mismo — lo necesita el tap único del modo
+  // voz para saber si un toque significa "interrumpe" en vez de "arranca".
+  const hablandoRef = useRef(false)
   const [grabando, setGrabando] = useState(false)
   const [recSecs, setRecSecs] = useState(0)
   const recTimer = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -347,11 +357,27 @@ function Agente(props: HandeiaAgentProps) {
   }, [pararDictado])
 
   const empezarDictado = useCallback(() => {
+    // Ya hay una sesión de reconocimiento viva — no abrir una segunda
+    // encima. Dos instancias escuchando a la vez es la otra forma de
+    // terminar con "hola hola hola…": cada una transcribe por su cuenta y
+    // las dos le entran a setTexto.
+    if (dictado.current) return
     // El texto ya escrito se conserva: lo dictado se añade, no lo pisa.
     const previo = texto ? texto + ' ' : ''
     const rec = iniciarDictado(
       dicho => setTexto(previo + dicho),
-      () => pararDictado(),
+      () => {
+        // El navegador puede cortar solo por silencio (Chrome lo hace
+        // rápido, unos segundos). En modo voz eso ES "ya terminé de
+        // hablar" — hay que mandarlo, no quedarse en silencio como si la
+        // conversación se hubiera muerto sola. En dictado suelto (mic sin
+        // modo voz) solo para, como siempre: el usuario manda con su check.
+        pararDictado()
+        if (voiceModeRef.current) {
+          const dicho = textoRef.current.trim()
+          if (dicho) enviarTextoRef.current(dicho, false)
+        }
+      },
     )
     if (!rec) return
     dictado.current = rec
@@ -432,7 +458,9 @@ function Agente(props: HandeiaAgentProps) {
   // de dictado sigue siendo independiente para quien solo quiere dictar).
   const decirYQuizasEscuchar = useCallback((texto: string, reescuchar = true) => {
     if (!voiceModeRef.current) return
+    hablandoRef.current = true
     hablar(texto, () => {
+      hablandoRef.current = false
       // Una confirmación pendiente (¿hago esto: X?) se lee, pero no vuelve a
       // escuchar sola — un "sí" dictado caería en el campo de texto, no en
       // los botones de confirmar/cancelar, así que reabrir el mic ahí
@@ -550,13 +578,22 @@ function Agente(props: HandeiaAgentProps) {
     await turno(mensaje, r)
   }, [props, turno, caminarHastaAccion])
 
-  const enviar = useCallback(() => {
+  // `mostrar=false` es para lo que llega por voz (dictado o modo voz): el
+  // usuario dijo "audio", no "transcribe" — nunca ve el texto que se
+  // entendió, ni en el campo (eso ya pasaba) ni en el "enviado" de arriba
+  // de la respuesta. Un mensaje escrito a mano sigue mostrándose igual.
+  const enviarTexto = useCallback((texto: string, mostrar = true) => {
     const t = texto.trim()
     if (!t || fase === 'thinking') return
-    setTexto(''); setEnviado(t); setRespuesta(''); setPendiente(null); setFase('thinking')
+    setTexto('')
+    if (mostrar) setEnviado(t)
+    setRespuesta(''); setPendiente(null); setFase('thinking')
     historial.current.push({ role: 'user', text: t })
     void turno(t)
-  }, [texto, fase, turno])
+  }, [fase, turno])
+  enviarTextoRef.current = enviarTexto
+
+  const enviar = useCallback(() => enviarTexto(texto), [texto, enviarTexto])
 
   // El shadow root se crea en un efecto, o sea solo en el navegador. Eso hace
   // de guardia para el render de servidor: Next renderiza los componentes de
@@ -791,41 +828,60 @@ function Agente(props: HandeiaAgentProps) {
                   // nada es peor que no tenerlo.
                   {...(hayDictado() ? {
                     voiceMode,
-                    // Los dos botones son cosas distintas y no se disparan
-                    // entre sí: el micrófono dicta, la onda enciende el
-                    // lienzo de voz. Atarlos hacía que abrir el modo voz se
-                    // pusiera a grabar solo, sin que nadie lo pidiera.
-                    // Apagarlo sí corta un dictado en curso — dejar el
-                    // micrófono abierto sin su lienzo sería peor. Y ahora
-                    // también corta la síntesis en curso: un mic cerrado con
-                    // Handeia todavía hablando sería la misma inconsistencia.
+                    // Modo voz es UN solo botón para toda la conversación,
+                    // no un interruptor aparte del dictado: tocarlo arranca
+                    // a escuchar, tocarlo mientras escucha manda tu turno,
+                    // tocarlo mientras Handeia habla la interrumpe, y
+                    // tocarlo mientras espera respuesta sale del modo — el
+                    // mismo patrón de un solo botón que ya tiene el campo de
+                    // texto de Nexus. El botón de "Dictar" de al lado sigue
+                    // siendo su propio camino, independiente, para quien
+                    // solo quiere dictar sin conversación.
                     onVoiceModeToggle: () => {
-                      setVoiceMode(v => {
-                        const next = !v
-                        voiceModeRef.current = next
-                        if (v) {
-                          pararDictado()
-                          pararHabla()
-                        } else if (respuesta) {
-                          // Ya hay algo en pantalla al prender el modo — se
-                          // lee de una vez, aprovechando el gesto del click
-                          // (que es lo que el navegador exige para la
-                          // primera síntesis). No arranca a grabar sola: eso
-                          // sigue siendo solo del botón de dictado. Si lo que
-                          // hay en pantalla es una confirmación pendiente,
-                          // tampoco reescucha sola (mismo motivo que arriba).
-                          decirYQuizasEscuchar(respuesta, !pendiente)
-                        }
-                        return next
-                      })
+                      if (grabando) {
+                        // Termina tu turno: para de escuchar y manda directo
+                        // lo que se entendió — nunca se muestra como texto,
+                        // ni en el campo (ya no se veía) ni en "enviado".
+                        const dicho = textoRef.current.trim()
+                        pararDictado()
+                        if (dicho) enviarTextoRef.current(dicho, false)
+                        return
+                      }
+                      if (hablandoRef.current) {
+                        // Interrumpe lo que está diciendo y sale del modo.
+                        pararHabla()
+                        hablandoRef.current = false
+                        voiceModeRef.current = false
+                        setVoiceMode(false)
+                        return
+                      }
+                      if (voiceMode) {
+                        // Prendido pero ni grabando ni hablando (esperando
+                        // respuesta, o recién prendido sin nada que decir) —
+                        // un tap aquí sale del modo.
+                        voiceModeRef.current = false
+                        setVoiceMode(false)
+                        return
+                      }
+                      // Arranca: prende el modo Y empieza a escuchar de una
+                      // vez, los dos en el mismo tap — así sostiene una
+                      // conversación completa con un solo botón.
+                      voiceModeRef.current = true
+                      setVoiceMode(true)
+                      empezarDictado()
                     },
                     recording: grabando,
                     recordSecs: recSecs,
                     onStartRecording: empezarDictado,
                     onCancelRecording: () => { pararDictado(); setTexto('') },
-                    // Se para el dictado y se manda lo dictado, que ya está en
-                    // el campo: es el mismo camino que un mensaje escrito.
-                    onSendRecording: () => { pararDictado(); if (texto.trim()) enviar() },
+                    // Dictar suelto (sin modo voz): para y manda, pero
+                    // tampoco se muestra como texto — "audio" significa
+                    // audio, no una transcripción a la vista.
+                    onSendRecording: () => {
+                      const dicho = texto.trim()
+                      pararDictado()
+                      if (dicho) enviarTexto(dicho, false)
+                    },
                   } : {})}
                 />
               </div>

@@ -68,10 +68,17 @@ export function iniciarDictado(
   rec.continuous = true
   rec.interimResults = true
 
-  let firme = ''
+  // Se reconstruye COMPLETO desde el índice 0 en cada evento, en vez de
+  // acumular con += arrastrando un `firme` entre eventos. Chrome, en modo
+  // continuo, a veces reemite tramos que ya había marcado como finales
+  // (típico tras una pausa breve) — con += eso los duplicaba cada vez que
+  // volvían a aparecer ("hola" dicho una vez podía volverse "hola hola
+  // hola..."). `e.results` ya trae el historial completo de la sesión, así
+  // que releerlo entero es la única forma de no arrastrar duplicados.
   rec.onresult = (e) => {
+    let firme = ''
     let provisional = ''
-    for (let i = e.resultIndex; i < e.results.length; i++) {
+    for (let i = 0; i < e.results.length; i++) {
       const tramo = e.results.item(i)
       if (!tramo) continue
       const texto = tramo.item(0)?.transcript ?? ''

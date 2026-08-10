@@ -5,6 +5,50 @@ Este paquete sigue [SemVer](https://semver.org/lang/es/).
 
 ---
 
+## [0.9.0] — 2026-08-09
+
+### Corregido — el dictado repetía palabras ("hola" salía como "hola hola hola…")
+
+`iniciarDictado` acumulaba los tramos finales con `firme += texto` arrastrando
+esa variable entre eventos de `onresult`, empezando el barrido en
+`e.resultIndex`. Chrome, en modo continuo, a veces reemite tramos que ya
+había marcado como finales (típico tras una pausa breve) — con `+=` eso los
+duplicaba cada vez que reaparecían. Ahora se reconstruye completo desde el
+índice 0 en cada evento — `e.results` ya trae el historial entero de la
+sesión, así que no hace falta (ni conviene) arrastrar nada entre eventos.
+
+De paso, `empezarDictado` ya no abre una segunda sesión de reconocimiento
+si ya hay una viva — dos instancias escuchando a la vez era la otra forma
+de terminar con el mismo síntoma.
+
+### Cambiado — modo voz es un solo botón para toda la conversación
+
+Antes, activar modo voz solo prendía el lienzo animado — grabar seguía
+siendo el botón de "Dictar", aparte. Si alguien tocaba solo la onda y
+hablaba, nunca se mandaba nada: parecía que "no funcionaba" porque
+literalmente no había pregunta que contestar.
+
+Ahora un tap en la onda hace todo, según el momento:
+- Apagado → prende el modo Y empieza a escuchar, los dos de un tap.
+- Escuchando → termina tu turno: para, y manda directo lo entendido.
+- Handeia hablando → interrumpe y sale del modo.
+- Esperando respuesta → un tap sale del modo.
+
+El botón de "Dictar" sigue intacto y aparte, para quien solo quiere dictar
+sin conversación.
+
+### Cambiado — lo que se dice (dictado o modo voz) nunca se muestra como texto
+
+"Audio" quería decir audio, no una transcripción a la vista. Antes lo
+dictado terminaba visible en el "enviado" de arriba de la respuesta, aunque
+nunca se hubiera visto en el campo mientras se grababa. Ahora `enviarTexto`
+acepta un `mostrar` — falso para todo lo que llega por voz — así que ese
+texto nunca aparece en ningún lado de la interfaz, solo viaja a Handeia.
+
+Un mensaje escrito a mano se sigue mostrando exactamente igual que siempre.
+
+---
+
 ## [0.8.0] — 2026-08-09
 
 ### Añadido — modo voz de verdad: conversación completa, no solo un lienzo animado
