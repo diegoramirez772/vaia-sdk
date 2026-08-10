@@ -5,6 +5,32 @@ Este paquete sigue [SemVer](https://semver.org/lang/es/).
 
 ---
 
+## [0.9.1] — 2026-08-09
+
+### Corregido — modo voz: "toca la onda para terminar tu turno" era imposible de tocar
+
+Bug real de 0.9.0: al empezar a grabar, `InputBar` cambia a la vista de
+grabación (ondas + Cancelar/Enviar) y el botón de la onda desaparece del
+todo — no vuelve a pintarse hasta que `recording` es `false`. El
+`onVoiceModeToggle` de 0.9.0 sí sabía qué hacer si lo tocabas mientras
+grababa (parar y mandar), pero no había ONDA que tocar para llegar ahí:
+la instrucción "tócala de nuevo para terminar" apuntaba a un botón que
+físicamente no estaba en pantalla.
+
+Ahora, grabando CON modo voz activo, la vista de grabación pinta un solo
+botón (✓) en vez de Cancelar/Enviar — mismo `onVoiceModeToggle`, que ya
+sabe que grabando+tap significa terminar y mandar. Grabando SIN modo voz
+(dictado suelto) se queda exactamente igual que siempre, con Cancelar y
+Enviar.
+
+De paso, `pararDictado` desconecta los callbacks de la sesión de
+reconocimiento (`onresult/onerror/onend`) antes de `stop()` — un evento
+que ya venía en camino de la sesión anterior podía llegar después de que
+una nueva arrancara y escribir con su `previo` viejo encima del texto de
+la sesión nueva.
+
+---
+
 ## [0.9.0] — 2026-08-09
 
 ### Corregido — el dictado repetía palabras ("hola" salía como "hola hola hola…")

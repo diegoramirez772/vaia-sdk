@@ -328,7 +328,18 @@ function Agente(props: HandeiaAgentProps) {
 
   // ── Dictado ────────────────────────────────────────────────────────────────
   const pararDictado = useCallback(() => {
-    dictado.current?.stop()
+    const rec = dictado.current
+    if (rec) {
+      // Desconecta los callbacks ANTES de stop() — si no, un onresult que ya
+      // venía en camino del reconocimiento anterior puede llegar después de
+      // que uno nuevo arrancó y escribir con su `previo` viejo encima del
+      // texto de la sesión nueva. Mismo motivo por el que useVoiceReply
+      // desconecta la utterance antes de cancelarla.
+      rec.onresult = null
+      rec.onerror = null
+      rec.onend = null
+      rec.stop()
+    }
     dictado.current = null
     setGrabando(false)
     setRecSecs(0)
