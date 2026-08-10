@@ -925,26 +925,17 @@ export function InputBar({
                 {/* Right actions — recording controls or mic/voice/publish */}
                 <AnimatePresence mode="wait">
                   {recording && voiceMode ? (
-                    // Modo voz grabando: el botón de la onda desaparecía por
-                    // completo aquí (esta rama antes solo pintaba Cancelar/
-                    // Enviar), así que "tocar la onda otra vez para terminar
-                    // tu turno" era físicamente imposible — no había onda que
-                    // tocar. Un solo botón, mismo onVoiceModeToggle de
-                    // siempre: como grabando===true, ahí adentro ya sabe que
-                    // significa "termina y manda".
+                    // Modo voz grabando: sin botón — nada que tocar. Detecta
+                    // sola cuándo dejaste de hablar y termina el turno
+                    // (VAD, ver agent.tsx), como pidió Diego: "digo algo y
+                    // ya responde", sin palomita de por medio.
                     <motion.div
                       key="rec-actions-voz"
-                      initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 8 }}
+                      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                       transition={{ duration: 0.15 }}
-                      className="flex items-center gap-1"
+                      className="text-[11px] tracking-[-0.01em] text-black/40 dark:text-white/55 px-1"
                     >
-                      <button
-                        onClick={onVoiceModeToggle}
-                        aria-label="Terminar tu turno"
-                        className="w-8 h-8 shrink-0 rounded-full flex items-center justify-center bg-black dark:bg-white text-white dark:text-black"
-                      >
-                        <Check className="w-[15px] h-[15px]" strokeWidth={2.2} />
-                      </button>
+                      Escuchando…
                     </motion.div>
                   ) : recording ? (
                     <motion.div

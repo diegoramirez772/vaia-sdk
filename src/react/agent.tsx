@@ -199,6 +199,13 @@ function Agente(props: HandeiaAgentProps) {
   const streamAudio = useRef<MediaStream | null>(null)
   const chunksAudio = useRef<Blob[]>([])
   const [transcribiendo, setTranscribiendo] = useState(false)
+  // Detección de silencio — solo corre en modo voz (no en dictado suelto,
+  // que sigue siendo "tú decides cuándo mandar"). `terminarTurnoDeVozRef` es
+  // el mismo truco de siempre para llamar a algo que se define después.
+  const audioCtxVad = useRef<AudioContext | null>(null)
+  const vadFrame = useRef<number | null>(null)
+  const silencioTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const terminarTurnoDeVozRef = useRef<() => void>(() => {})
   const [pendiente, setPendiente] = useState<{ name: string; args: Record<string, unknown> } | null>(null)
 
   // ── Arrastre del círculo, igual que en Handeia ─────────────────────────────
@@ -401,7 +408,59 @@ function Agente(props: HandeiaAgentProps) {
     recTimer.current = setInterval(() => setRecSecs(s => s + 1), 1000)
   }, [texto])
 
+  // Nivel de volumen (RMS, 0–1) por debajo del cual se considera silencio, y
+  // cuánto silencio sostenido antes de dar el turno por terminado — solo en
+  // modo voz. Números elegidos para conversación normal, no para gritar ni
+  // para susurrar; ajustables si en la demo se sienten mal.
+  const NIVEL_SILENCIO = 0.015
+  const SILENCIO_MS = 1400
+
+  const detenerVAD = useCallback(() => {
+    if (vadFrame.current !== null) { cancelAnimationFrame(vadFrame.current); vadFrame.current = null }
+    if (silencioTimer.current) { clearTimeout(silencioTimer.current); silencioTimer.current = null }
+    if (audioCtxVad.current) { audioCtxVad.current.close().catch(() => {}); audioCtxVad.current = null }
+  }, []);
+
+  // Mide el volumen del mismo stream que ya está grabando MediaRecorder —
+  // no abre un segundo acceso al mic, solo analiza la señal. En cuanto
+  // detecta que hubo voz Y LUEGO silencio sostenido, termina el turno solo:
+  // "dejo de hablar y ya responde", sin tocar ningún botón.
+  const iniciarVAD = useCallback((stream: MediaStream) => {
+    const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!Ctor) return;
+    const ctx = new Ctor();
+    audioCtxVad.current = ctx;
+    const fuente = ctx.createMediaStreamSource(stream);
+    const analizador = ctx.createAnalyser();
+    analizador.fftSize = 512;
+    fuente.connect(analizador);
+    const datos = new Uint8Array(analizador.frequencyBinCount);
+    let yaHabloAlgo = false;
+
+    const revisar = () => {
+      analizador.getByteTimeDomainData(datos);
+      let suma = 0;
+      for (let i = 0; i < datos.length; i++) {
+        const v = (datos[i]! - 128) / 128;
+        suma += v * v;
+      }
+      const rms = Math.sqrt(suma / datos.length);
+      if (rms > NIVEL_SILENCIO) {
+        yaHabloAlgo = true;
+        if (silencioTimer.current) { clearTimeout(silencioTimer.current); silencioTimer.current = null; }
+      } else if (yaHabloAlgo && !silencioTimer.current) {
+        silencioTimer.current = setTimeout(() => {
+          silencioTimer.current = null;
+          if (voiceModeRef.current) terminarTurnoDeVozRef.current();
+        }, SILENCIO_MS);
+      }
+      vadFrame.current = requestAnimationFrame(revisar);
+    };
+    vadFrame.current = requestAnimationFrame(revisar);
+  }, []);
+
   const pararGrabacionAudio = useCallback(() => {
+    detenerVAD()
     const rec = grabador.current
     if (rec) { rec.onstop = null; try { rec.stop() } catch { /* ya estaba parado */ } }
     streamAudio.current?.getTracks().forEach(t => t.stop())
@@ -412,7 +471,7 @@ function Agente(props: HandeiaAgentProps) {
     setRecSecs(0)
     setTranscribiendo(false)
     if (recTimer.current) { clearInterval(recTimer.current); recTimer.current = null }
-  }, [])
+  }, [detenerVAD])
 
   const empezarGrabacionAudio = useCallback(async () => {
     if (grabador.current) return
@@ -427,16 +486,20 @@ function Agente(props: HandeiaAgentProps) {
       setGrabando(true)
       setRecSecs(0)
       recTimer.current = setInterval(() => setRecSecs(s => s + 1), 1000)
+      // Detección de silencio SOLO en modo voz — dictado suelto (mic sin
+      // modo voz) sigue siendo "tú decides cuándo mandar", como pidió Diego.
+      if (voiceModeRef.current) iniciarVAD(stream)
     } catch {
       // Sin permiso de mic, o sin dispositivo — no hay nada que hacer, igual
       // que cuando el navegador no trae reconocimiento nativo.
     }
-  }, [])
+  }, [iniciarVAD])
 
   // Para de grabar Y transcribe — null si no había nada que mandar (sin
   // audio, permiso negado, o falló la transcripción del espacio).
   const terminarGrabacionAudio = useCallback((): Promise<string | null> => {
     return new Promise((resolve) => {
+      detenerVAD()
       const rec = grabador.current
       const onTranscribeAudio = props.onTranscribeAudio
       if (!rec || !onTranscribeAudio) { resolve(null); return }
@@ -462,7 +525,7 @@ function Agente(props: HandeiaAgentProps) {
       }
       rec.stop()
     })
-  }, [props])
+  }, [props, detenerVAD])
 
   // Los tres call sites de abajo (mic, modo voz, cerrarCampo) no necesitan
   // saber cuál de los dos caminos está activo — solo si el espacio dio
@@ -500,7 +563,12 @@ function Agente(props: HandeiaAgentProps) {
 
   // Si el componente se va con el micrófono abierto, se cierra. Dejarlo
   // escuchando sería lo peor que puede hacer un SDK.
-  useEffect(() => () => { dictado.current?.abort(); if (recTimer.current) clearInterval(recTimer.current) }, [])
+  useEffect(() => () => {
+    dictado.current?.abort()
+    if (recTimer.current) clearInterval(recTimer.current)
+    streamAudio.current?.getTracks().forEach(t => t.stop())
+    detenerVAD()
+  }, [detenerVAD])
 
   // Mide el borde superior real del campo — cada vez que cambia de tamaño
   // (textarea creciendo, cambio de fase, teclado de móvil abriéndose) y cada
@@ -721,6 +789,7 @@ function Agente(props: HandeiaAgentProps) {
     pararDictadoNativo()
     if (dicho) enviarTexto(dicho, false)
   }, [props.onTranscribeAudio, terminarGrabacionAudio, pararDictadoNativo, enviarTexto])
+  terminarTurnoDeVozRef.current = () => { void terminarTurnoDeVoz() }
 
   // El shadow root se crea en un efecto, o sea solo en el navegador. Eso hace
   // de guardia para el render de servidor: Next renderiza los componentes de

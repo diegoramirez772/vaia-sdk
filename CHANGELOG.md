@@ -5,6 +5,24 @@ Este paquete sigue [SemVer](https://semver.org/lang/es/).
 
 ---
 
+## [0.10.1] — 2026-08-09
+
+### Cambiado — modo voz detecta solo cuándo dejaste de hablar, sin palomita
+
+"Digo algo y ya responde" — modo voz ya no depende de tocar un botón para
+terminar tu turno. Mientras graba (solo en modo voz; dictado suelto sigue
+siendo tú-decides-cuándo-mandar), un `AnalyserNode` mide el volumen del
+mismo stream que ya está grabando MediaRecorder — sin abrir un segundo
+acceso al mic. En cuanto hay voz y LUEGO 1.4s de silencio sostenido,
+termina el turno y transcribe solo, ni más ni menos que si hubieras
+tocado el botón.
+
+La vista de grabación de modo voz ya no pinta el botón ✓ — ahora solo
+dice "Escuchando…". Dictado suelto (mic sin modo voz) se queda exactamente
+igual, con su Cancelar/Enviar de siempre.
+
+---
+
 ## [0.10.0] — 2026-08-09
 
 ### Añadido — `onTranscribeAudio`: audio real en vez de reconocimiento nativo
