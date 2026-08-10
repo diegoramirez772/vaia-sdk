@@ -5,6 +5,29 @@ Este paquete sigue [SemVer](https://semver.org/lang/es/).
 
 ---
 
+## [0.9.2] — 2026-08-09
+
+### Corregido — el dictado soltaba el texto en el campo cuando el navegador cortaba solo
+
+Chrome corta el reconocimiento por su cuenta a los pocos segundos de
+silencio, aunque `continuous` esté prendido. Eso hacía caer `grabando` a
+`false`, y sin `grabando`, la pantalla volvía al textarea normal —
+mostrando ahí, visible y editable, todo lo dictado hasta ese momento.
+"Audio" significa audio: el usuario nunca debía ver ese texto, y una pausa
+al hablar no debería soltarlo en pantalla solo por cortesía del navegador.
+
+Ahora, si el reconocimiento termina SOLO (no porque el usuario tocó
+Cancelar, Enviar o el botón de modo voz — esos ya desconectan este
+callback antes de parar, ver 0.9.1), se reengancha de inmediato sin soltar
+la vista de grabación. "Modo audio" graba de verdad hasta que decides
+mandar, no hasta que Chrome decide que ya hablaste suficiente.
+
+Mismo trato para modo voz: el silencio ya no se siente como que la
+conversación se cortó sola — sigue escuchando hasta que tocas el botón
+para terminar tu turno.
+
+---
+
 ## [0.9.1] — 2026-08-09
 
 ### Corregido — modo voz: "toca la onda para terminar tu turno" era imposible de tocar

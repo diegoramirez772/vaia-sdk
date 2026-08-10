@@ -378,16 +378,24 @@ function Agente(props: HandeiaAgentProps) {
     const rec = iniciarDictado(
       dicho => setTexto(previo + dicho),
       () => {
-        // El navegador puede cortar solo por silencio (Chrome lo hace
-        // rápido, unos segundos). En modo voz eso ES "ya terminé de
-        // hablar" — hay que mandarlo, no quedarse en silencio como si la
-        // conversación se hubiera muerto sola. En dictado suelto (mic sin
-        // modo voz) solo para, como siempre: el usuario manda con su check.
-        pararDictado()
-        if (voiceModeRef.current) {
-          const dicho = textoRef.current.trim()
-          if (dicho) enviarTextoRef.current(dicho, false)
-        }
+        // Si esto se dispara es porque el navegador cortó SOLO (silencio,
+        // error) — pararDictado() desconecta este mismo callback justo
+        // antes de cualquier stop() explícito (Cancelar, Enviar, el botón
+        // de modo voz), así que un usuario terminando su turno a propósito
+        // NUNCA pasa por aquí.
+        //
+        // "Modo audio siempre debe estar grabando hasta que tú decidas" —
+        // Chrome corta el reconocimiento por su cuenta a los pocos segundos
+        // de silencio aunque `continuous` esté prendido, y antes eso hacía
+        // caer grabando a false: la pantalla volvía al textarea normal y el
+        // dictado completo aparecía ahí, visible — justo lo que no debía
+        // pasar. Ahora se reengancha sola, sin soltar la vista de
+        // grabación ni mostrar nada. Mismo trato para modo voz: el
+        // silencio del navegador ya no se siente como que la conversación
+        // se murió, solo sigue escuchando hasta que tú toques para acabar.
+        dictado.current = null
+        if (recTimer.current) { clearInterval(recTimer.current); recTimer.current = null }
+        empezarDictado()
       },
     )
     if (!rec) return
@@ -395,7 +403,7 @@ function Agente(props: HandeiaAgentProps) {
     setGrabando(true)
     setRecSecs(0)
     recTimer.current = setInterval(() => setRecSecs(s => s + 1), 1000)
-  }, [texto, pararDictado])
+  }, [texto])
 
   // Si el componente se va con el micrófono abierto, se cierra. Dejarlo
   // escuchando sería lo peor que puede hacer un SDK.
