@@ -110,7 +110,7 @@ export function iniciarDictado(
  * canceló) para que quien llama pueda encadenar el siguiente paso, como
  * volver a escuchar.
  */
-export function hablar(texto: string, alTerminar: () => void): void {
+function hablarNavegador(texto: string, alTerminar: () => void): void {
   const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined
   if (!synth || !texto.trim()) { alTerminar(); return }
   synth.cancel()
@@ -124,15 +124,204 @@ export function hablar(texto: string, alTerminar: () => void): void {
   synth.resume()
 }
 
+// ─── Voz real, si el espacio la ofrece ─────────────────────────────────────
+//
+// El SDK sigue sin mandar audio a ningún lado por su cuenta — la regla dura
+// de arriba no cambia. `sintetizar`, si se pasa (ver onSynthesizeSpeech en
+// HandeiaAgentProps), es una función que el ESPACIO entrega: texto entra,
+// bytes de audio salen, y a dónde va esa llamada real es decisión del
+// espacio, nunca del SDK. Sin ella, `hablar()` se queda en
+// hablarNavegador() de siempre.
+//
+// Se reproduce con Web Audio (AudioContext) y no con un <audio>: en móvil un
+// <audio> creado por código nace bloqueado si no sale de un gesto del
+// usuario, y la respuesta llega segundos después del toque al micrófono — el
+// AudioContext se desbloquea una vez con resume() dentro del gesto (el mismo
+// toque que abre el campo) y se queda desbloqueado todo el rato.
+
+/** Corta por final de oración conservando el signo, agrupando las muy cortas
+ * ("Sí.", "Claro.") con la siguiente — partir ahí solo añade un viaje de red
+ * y una costura audible sin ganar nada. El primer trozo se deja lo más corto
+ * posible a propósito: lo único que se percibe como "tardó en contestar" es
+ * cuánto pasa hasta el primer sonido, y las frases que siguen se sintetizan
+ * mientras esa ya suena. */
+function partirEnFrases(texto: string, minLargo = 60): string[] {
+  const crudas = texto.match(/[^.!?…\n]+[.!?…]*\s*/g) ?? [texto]
+  const frases: string[] = []
+  for (const cruda of crudas) {
+    const frase = cruda.trim()
+    if (!frase) continue
+    const ultima = frases[frases.length - 1]
+    if (ultima && frases.length > 1 && ultima.length < minLargo) {
+      frases[frases.length - 1] = `${ultima} ${frase}`
+    } else {
+      frases.push(frase)
+    }
+  }
+  const unica = frases[0]
+  if (frases.length === 1 && unica !== undefined && unica.length > 90) {
+    const corte = unica.indexOf(', ')
+    if (corte > 20 && corte < 90) return [unica.slice(0, corte + 1), unica.slice(corte + 2)]
+  }
+  return frases
+}
+
+let ctxCompartido: AudioContext | null = null
+let fuenteActual: AudioBufferSourceNode | null = null
+// Cada reproducción lleva su propio turno. Si pararHabla() corta y arranca
+// otra antes de que termine un fetch en vuelo, el resultado viejo llega tarde
+// y hay que descartarlo en vez de dejar que hable encima del turno nuevo.
+let turnoActual = 0
+
+type CtorAudio = typeof AudioContext
+function obtenerContexto(): AudioContext | null {
+  if (typeof window === 'undefined') return null
+  if (!ctxCompartido) {
+    const w = window as unknown as { AudioContext?: CtorAudio; webkitAudioContext?: CtorAudio }
+    const Ctor = w.AudioContext ?? w.webkitAudioContext
+    if (!Ctor) return null
+    ctxCompartido = new Ctor()
+  }
+  // Tiene que resumirse dentro de un gesto del usuario para contar como
+  // permiso — quien llama a esto lo hace desde dentro del toque al campo.
+  if (ctxCompartido.state === 'suspended') ctxCompartido.resume().catch(() => {})
+  return ctxCompartido
+}
+
 /**
- * Corta lo que se esté leyendo, si acaso. Según el navegador, esto puede
- * disparar el `alTerminar` del `hablar()` en curso (Chrome lo hace vía
- * `onerror`) — quien llame a esto debe apagar su propia bandera de "sigo en
- * modo voz" ANTES de invocarlo, así ese callback no intenta seguir la
- * conversación con algo que el usuario acaba de cortar.
+ * Aquí está la sincronía de verdad: el texto no avanza con un cronómetro que
+ * adivina el ritmo del habla — eso sería una coincidencia, no una sincronía —
+ * sino como CONSECUENCIA de lo que ya sonó. El AudioBuffer sabe cuánto dura y
+ * el AudioContext en qué milisegundo va, así que la proporción es exacta: es
+ * imposible que el texto se adelante a la voz.
+ */
+function reproducir(ctx: AudioContext, buffer: AudioBuffer, alAvanzar: (p: number) => void): Promise<void> {
+  return new Promise((resolve) => {
+    const fuente = ctx.createBufferSource()
+    fuente.buffer = buffer
+    fuente.connect(ctx.destination)
+    fuenteActual = fuente
+    const inicio = ctx.currentTime
+    const duracion = buffer.duration || 0.001
+    let raf = 0
+    const seguir = () => {
+      const p = Math.min(1, (ctx.currentTime - inicio) / duracion)
+      alAvanzar(p)
+      if (p < 1) raf = requestAnimationFrame(seguir)
+    }
+    raf = requestAnimationFrame(seguir)
+    fuente.onended = () => { cancelAnimationFrame(raf); alAvanzar(1); resolve() }
+    fuente.start()
+  })
+}
+
+async function hablarConAudio(
+  texto: string,
+  alTerminar: () => void,
+  sintetizar: (texto: string) => Promise<ArrayBuffer | Blob>,
+  alHablado?: (parcial: string) => void,
+): Promise<void> {
+  const ctx = obtenerContexto()
+  if (!ctx) { hablarNavegador(texto, alTerminar); return }
+
+  const turno = ++turnoActual
+  const frases = partirEnFrases(texto.trim())
+  if (frases.length === 0) { alTerminar(); return }
+
+  // Se adelantan 2 frases en paralelo con lo que ya está sonando — sintetizar
+  // dura menos que hablar, así que con una adelantada siempre hay audio listo
+  // cuando termina la anterior y la respuesta suena continua.
+  const PREFETCH = 2
+  const pedir = async (frase: string): Promise<AudioBuffer | null> => {
+    try {
+      const bytes = await sintetizar(frase)
+      const buf = bytes instanceof Blob ? await bytes.arrayBuffer() : bytes
+      return await ctx.decodeAudioData(buf)
+    } catch {
+      return null
+    }
+  }
+
+  const cola: Promise<AudioBuffer | null>[] = frases.slice(0, PREFETCH).map(pedir)
+  let proxima = PREFETCH
+  let dicho = ''
+
+  for (let i = 0; i < frases.length; i++) {
+    const frase = frases[i]
+    if (frase === undefined) continue
+    if (turnoActual !== turno) return
+    const buffer = await cola[i]
+    if (turnoActual !== turno) return
+    if (proxima < frases.length) {
+      const siguiente = frases[proxima++]
+      if (siguiente !== undefined) cola.push(pedir(siguiente))
+    }
+
+    const previo = dicho
+    if (buffer) {
+      // El progreso llega a 60fps pero el texto solo cambia cuando se revela
+      // otra letra — sin este filtro se avisaría varias veces por cada
+      // cambio real, repintando de más para nada.
+      let ultimo = ''
+      await reproducir(ctx, buffer, (p) => {
+        const hasta = Math.floor(frase.length * p)
+        const parcial = (previo ? `${previo} ` : '') + frase.slice(0, hasta)
+        if (parcial === ultimo) return
+        ultimo = parcial
+        alHablado?.(parcial)
+      })
+      if (turnoActual !== turno) return
+    } else if (i === 0) {
+      // Ni la primera frase salió: el espacio no está dando voz ahora mismo.
+      // Se cae al sintetizador del navegador con el texto entero — suena
+      // peor, pero mudo no se queda.
+      hablarNavegador(texto, alTerminar)
+      return
+    } else {
+      // Solo falló una frase intermedia: se enseña esa entera (no hay audio
+      // al que sincronizarla) y se sigue con las siguientes.
+      alHablado?.((previo ? `${previo} ` : '') + frase)
+    }
+    dicho = (previo ? `${previo} ` : '') + frase
+  }
+
+  if (turnoActual !== turno) return
+  alTerminar()
+}
+
+/**
+ * Lee texto en voz alta. Sin `sintetizar`, es exactamente el
+ * `hablarNavegador` de siempre. Con ella (ver onSynthesizeSpeech), se
+ * reproduce el audio real por Web Audio y `alHablado` recibe el texto ya
+ * pronunciado, acumulado, para que quien llama lo pinte en sincronía —
+ * `alTerminar` avisa cuando termina (o falla, o se canceló) para que quien
+ * llama pueda encadenar el siguiente paso, como volver a escuchar.
+ */
+export function hablar(
+  texto: string,
+  alTerminar: () => void,
+  sintetizar?: (texto: string) => Promise<ArrayBuffer | Blob>,
+  alHablado?: (parcial: string) => void,
+): void {
+  if (!texto.trim()) { alTerminar(); return }
+  if (!sintetizar) { hablarNavegador(texto, alTerminar); return }
+  void hablarConAudio(texto, alTerminar, sintetizar, alHablado)
+}
+
+/**
+ * Corta lo que se esté leyendo, si acaso — tanto el audio real (Web Audio)
+ * como el sintetizador del navegador. Según el navegador, cancelar
+ * speechSynthesis puede disparar el `alTerminar` del `hablar()` en curso
+ * (Chrome lo hace vía `onerror`) — quien llame a esto debe apagar su propia
+ * bandera de "sigo en modo voz" ANTES de invocarlo, así ese callback no
+ * intenta seguir la conversación con algo que el usuario acaba de cortar.
  */
 export function pararHabla(): void {
+  turnoActual++
+  if (fuenteActual) {
+    try { fuenteActual.stop() } catch { /* ya terminó sola */ }
+    fuenteActual = null
+  }
   const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined
-  if (!synth) return
-  synth.cancel()
+  synth?.cancel()
 }

@@ -92,6 +92,22 @@ export interface HandeiaAgentProps {
    * lo sepa". Sin esto, se usa el dictado nativo del navegador de siempre.
    */
   onTranscribeAudio?: ((audio: Blob) => Promise<string>) | undefined
+  /**
+   * Sintetiza voz real para la respuesta del agente. Si se pasa, el modo voz
+   * suena con esta voz en vez del sintetizador del navegador (robótica,
+   * cambia según el sistema operativo) — y el texto en pantalla se revela en
+   * sincronía con lo que ya sonó, no de golpe apenas llega la respuesta.
+   *
+   * Igual que onTranscribeAudio/getAuthHeader/onAction: a dónde va el texto y
+   * con qué credenciales es decisión del espacio, nunca del SDK — así se
+   * sostiene "el SDK no manda nada a ningún lado sin que el dueño del espacio
+   * lo sepa". Sin esto, el modo voz sigue funcionando exactamente igual que
+   * hoy: sintetizador nativo, texto de golpe.
+   *
+   * Puede devolver un ArrayBuffer o un Blob (lo natural desde un fetch) con
+   * cualquier formato que decodeAudioData entienda (WAV, MP3, …).
+   */
+  onSynthesizeSpeech?: ((texto: string) => Promise<ArrayBuffer | Blob>) | undefined
 }
 
 /**
@@ -637,6 +653,16 @@ function Agente(props: HandeiaAgentProps) {
   // no lleva a ningún lado. No se dispara si el modo está apagado (el botón
   // de dictado sigue siendo independiente para quien solo quiere dictar).
   const decirYQuizasEscuchar = useCallback((texto: string, reescuchar = true) => {
+    // Sin modo voz activo, o sin voz real que sincronizar (onSynthesizeSpeech
+    // no vino, así que hablar() caería al sintetizador del navegador, sin
+    // bytes de audio que medir): el texto se ve completo de inmediato, como
+    // siempre. Con las dos cosas, arranca vacío y lo va llenando hablar()
+    // según suena — ver alHablado más abajo.
+    if (!voiceModeRef.current || !props.onSynthesizeSpeech) {
+      setRespuesta(texto)
+    } else {
+      setRespuesta('')
+    }
     if (!voiceModeRef.current) return
     hablandoRef.current = true
     hablar(texto, () => {
@@ -646,8 +672,8 @@ function Agente(props: HandeiaAgentProps) {
       // los botones de confirmar/cancelar, así que reabrir el mic ahí
       // prometería algo que el SDK todavía no sabe cumplir.
       if (reescuchar && voiceModeRef.current) empezarDictado()
-    })
-  }, [empezarDictado])
+    }, props.onSynthesizeSpeech, setRespuesta)
+  }, [empezarDictado, props.onSynthesizeSpeech])
 
   // ── Un turno contra Handeia ────────────────────────────────────────────────
   const turno = useCallback(async (mensaje: string, actionResult?: AgentActionResult) => {
@@ -688,14 +714,12 @@ function Agente(props: HandeiaAgentProps) {
           : data.error === 'espacio_no_instalado' ? 'Este espacio no está instalado en tu Handeia.'
           : data.error === 'cupo_agotado' ? 'Se agotó el uso del asistente por hoy en este espacio.'
           : 'Handeia no pudo responder ahora mismo.'
-        setRespuesta(texto)
         decirYQuizasEscuchar(texto)
         setFase('idle')
         return
       }
     } catch {
       const texto = 'No pude comunicarme con Handeia.'
-      setRespuesta(texto)
       decirYQuizasEscuchar(texto)
       setFase('idle')
       return
@@ -711,7 +735,6 @@ function Agente(props: HandeiaAgentProps) {
         // Esto SÍ es algo que el usuario debe leer: el espacio no sabe hacer
         // lo que se le pidió.
         const texto = 'Esto requiere una acción que este espacio todavía no sabe ejecutar.'
-        setRespuesta(texto)
         decirYQuizasEscuchar(texto)
         setFase('idle')
         return
@@ -723,7 +746,6 @@ function Agente(props: HandeiaAgentProps) {
         // confirmar viven dentro de ella. Sin este respaldo, una acción que
         // pide permiso se quedaría esperando una respuesta invisible.
         const texto = data.text || `¿Hago esto: ${data.action.name}?`
-        setRespuesta(texto)
         decirYQuizasEscuchar(texto, false)
         setFase('idle')
         setPendiente({ name: data.action.name, args: data.action.args ?? {} })
@@ -739,7 +761,6 @@ function Agente(props: HandeiaAgentProps) {
     }
 
     // Sin acción: es una pregunta de texto normal, con su blur de siempre.
-    setRespuesta(data.text ?? '')
     decirYQuizasEscuchar(data.text ?? '')
     setFase('idle')
   }, [base, props, decirYQuizasEscuchar])
@@ -952,7 +973,7 @@ function Agente(props: HandeiaAgentProps) {
                     Hacerlo
                   </button>
                   <button
-                    onClick={() => { setPendiente(null); setRespuesta('Cancelado.'); decirYQuizasEscuchar('Cancelado.') }}
+                    onClick={() => { setPendiente(null); decirYQuizasEscuchar('Cancelado.') }}
                     className="h-8 px-4 rounded-full border border-black/[0.12] dark:border-white/[0.18] text-black/70 dark:text-white/85 text-[12px]"
                   >
                     Cancelar

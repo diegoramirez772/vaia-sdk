@@ -5,6 +5,48 @@ Este paquete sigue [SemVer](https://semver.org/lang/es/).
 
 ---
 
+## [0.11.0] — 2026-09-04
+
+### Añadido — `onSynthesizeSpeech`: voz real, sincronizada con el texto
+
+Mismo pedido que 0.10.0 pero del lado de la respuesta: que el modo voz suene
+tan bien como el que ya se armó para Nexus (Kokoro vía ACIPE), no con
+`speechSynthesis` del navegador — robótica, cambia según el sistema operativo,
+y con bugs conocidos (`getVoices()` carga async y devuelve vacío la primera
+vez, Chrome enmudece solo a los ~15s).
+
+Nuevo prop opcional en `HandeiaAgentProps`:
+
+```ts
+onSynthesizeSpeech?: (texto: string) => Promise<ArrayBuffer | Blob>
+```
+
+Si el espacio lo pasa, `hablar()` (voz.ts) reproduce el audio real con Web
+Audio en vez de `<audio>` — en móvil un `<audio>` creado por código nace
+bloqueado si no sale de un gesto del usuario, y la respuesta llega segundos
+después del toque al micrófono; el `AudioContext` se desbloquea una vez
+dentro del gesto y se queda desbloqueado todo el rato. La respuesta se parte
+en frases (la primera corta a propósito, para que lo único que se perciba
+como espera sea hasta el primer sonido) y cada una se sintetiza mientras
+suena la anterior.
+
+Y el texto en pantalla ya no aparece de golpe: se revela como CONSECUENCIA
+del audio que ya sonó (el `AudioBuffer` sabe cuánto dura, el `AudioContext`
+en qué milisegundo va), así que es imposible que el texto se adelante a la
+voz — mismo principio que ya se shippeó en Nexus (`VoiceReveal`).
+
+El espacio decide a dónde va el texto y con qué credenciales — mismo
+principio que `onTranscribeAudio`/`getAuthHeader`/`onAction`: el SDK nunca
+manda nada a ningún lado por su cuenta. Sin este prop, el modo voz sigue
+exactamente igual que en 0.10.x: sintetizador nativo, texto de golpe —
+retrocompatible con cualquier espacio que no lo use.
+
+Si falla la síntesis (red caída, el espacio sin cuota de voz, lo que sea),
+cae sola al sintetizador del navegador con el texto completo — nunca se
+queda muda.
+
+---
+
 ## [0.10.1] — 2026-08-09
 
 ### Cambiado — modo voz detecta solo cuándo dejaste de hablar, sin palomita
