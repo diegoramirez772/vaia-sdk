@@ -13,7 +13,7 @@
  * El espacio declara qué sabe hacer; Handeia razona. Aquí no hay ninguna IA.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useImperativeHandle, useRef, useState, forwardRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useShadowRoot, useTemaDelHost } from './estilos.js'
 import { iniciarDictado, hayDictado, hayGrabacion, hablar, pararHabla, type SpeechRec } from './voz.js'
@@ -111,6 +111,24 @@ export interface HandeiaAgentProps {
 }
 
 /**
+ * Lo que un espacio puede pedirle al círculo desde AFUERA, vía `ref`.
+ *
+ * El SDK nunca escucha nada por su cuenta — no hay micrófono abierto sin que
+ * el espacio lo haya pedido explícitamente. `activarPorVoz` existe para
+ * cuando el ESPACIO ya decidió, por su propia cuenta y con su propio
+ * criterio (una palabra de activación, un botón físico, lo que sea), que
+ * toca prender el modo voz — el círculo solo ejecuta el mismo camino que ya
+ * corre al tocar el micrófono a mano, nunca uno nuevo ni más permisivo.
+ */
+export interface HandeiaAgentHandle {
+  /** Abre el campo y arranca modo voz de una — igual que tocar el círculo y
+   *  luego el micrófono, en un solo paso. No hace nada si ya está en modo
+   *  voz, o si hay un mensaje a medio escribir en el campo (no se interrumpe
+   *  algo que el usuario ya empezó a teclear). */
+  activarPorVoz(): void
+}
+
+/**
  * Deja el círculo dentro de lo que el usuario REALMENTE ve.
  *
  * Acotarlo a la ventana no basta en móvil: las barras del navegador se comen
@@ -138,15 +156,17 @@ function acotar(x: number, y: number): { x: number; y: number } {
  * Lo que se exporta envuelve al componente real: si algo revienta aquí dentro,
  * desaparece el agente y la app que lo hospeda sigue funcionando.
  */
-export function HandeiaAgent(props: HandeiaAgentProps) {
-  return (
-    <LimiteDeError>
-      <Agente {...props} />
-    </LimiteDeError>
-  )
-}
+export const HandeiaAgent = forwardRef<HandeiaAgentHandle, HandeiaAgentProps>(
+  function HandeiaAgent(props, ref) {
+    return (
+      <LimiteDeError>
+        <Agente {...props} ref={ref} />
+      </LimiteDeError>
+    )
+  },
+)
 
-function Agente(props: HandeiaAgentProps) {
+const Agente = forwardRef<HandeiaAgentHandle, HandeiaAgentProps>(function Agente(props, ref) {
   const base = (props.handeiaUrl ?? HANDEIA_POR_DEFECTO).replace(/\/$/, '')
 
   // Todo el agente vive dentro de este shadow root: sus estilos no salen y los
@@ -576,6 +596,22 @@ function Agente(props: HandeiaAgentProps) {
     setPendiente(null)
     setFase('idle')
   }, [pararDictado])
+
+  // La única puerta de entrada externa al modo voz — ver HandeiaAgentHandle.
+  // Mismo camino que ya corre al tocar el círculo y el micrófono a mano
+  // (setFieldOpen + voiceModeRef + empezarDictado), nunca uno nuevo: quien
+  // detecta la palabra de activación por su cuenta (el espacio) no gana
+  // ningún atajo que un tap normal no tuviera ya.
+  useImperativeHandle(ref, () => ({
+    activarPorVoz: () => {
+      if (voiceModeRef.current) return
+      if (fieldOpen && textoRef.current.trim()) return
+      setFieldOpen(true)
+      voiceModeRef.current = true
+      setVoiceMode(true)
+      empezarDictado()
+    },
+  }), [fieldOpen, empezarDictado])
 
   // Si el componente se va con el micrófono abierto, se cierra. Dejarlo
   // escuchando sería lo peor que puede hacer un SDK.
@@ -1126,4 +1162,4 @@ function Agente(props: HandeiaAgentProps) {
     </div>,
     shadow,
   )
-}
+})

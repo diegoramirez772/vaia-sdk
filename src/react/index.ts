@@ -7,6 +7,6 @@
  * — no una imitación que se desviaría en cuanto alguien toque el original.
  */
 export { HandeiaAgent } from './agent.js'
-export type { HandeiaAgentProps } from './agent.js'
+export type { HandeiaAgentProps, HandeiaAgentHandle } from './agent.js'
 export { InputBar, VoiceCanvas, MODELS } from './input-bar.js'
 export type { InputBarProps, InputBarConnector } from './input-bar.js'

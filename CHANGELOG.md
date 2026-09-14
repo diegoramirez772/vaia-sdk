@@ -5,6 +5,41 @@ Este paquete sigue [SemVer](https://semver.org/lang/es/).
 
 ---
 
+## [0.12.0] — 2026-09-14
+
+### Añadido — `activarPorVoz` vía `ref`: activación por palabra de despertar
+
+Pedido: un espacio quiere poder activar el modo voz del círculo desde AFUERA
+— por ejemplo, al detectar una palabra de activación propia ("Gaia" en
+Nexus, un detector 100% local por huella de voz que nunca manda audio a
+ningún lado). Hasta ahora `HandeiaAgent` no tenía ninguna API imperativa: su
+estado de abierto/cerrado y su micrófono vivían encerrados adentro,
+alcanzables solo por un tap real del usuario.
+
+```tsx
+const ref = useRef<HandeiaAgentHandle>(null)
+<HandeiaAgent ref={ref} capabilityId="..." />
+// cuando el espacio decide (por su cuenta) que toca activarse:
+ref.current?.activarPorVoz()
+```
+
+`activarPorVoz()` corre EXACTAMENTE el mismo camino que ya corre al tocar el
+círculo y luego el micrófono a mano (abre el campo, prende el modo voz,
+arranca a escuchar) — no es un atajo nuevo ni más permisivo, es el mismo tap
+de siempre disparado por código en vez de por un dedo. No hace nada si ya
+está en modo voz, ni si hay un mensaje a medio escribir en el campo (nunca
+interrumpe algo que el usuario ya empezó a teclear).
+
+El SDK sigue sin escuchar nada por su cuenta — la regla dura no cambia: el
+micrófono nunca se abre si el espacio no lo pidió explícitamente, ni con
+esto. Detectar la palabra de activación (o lo que sea) sigue siendo
+responsabilidad exclusiva del espacio; el círculo solo reacciona cuando se
+lo piden.
+
+Retrocompatible: sin `ref`, todo sigue exactamente igual que en 0.11.x.
+
+---
+
 ## [0.11.0] — 2026-09-04
 
 ### Añadido — `onSynthesizeSpeech`: voz real, sincronizada con el texto
