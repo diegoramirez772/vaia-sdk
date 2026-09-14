@@ -137,6 +137,22 @@ export interface InputBarProps {
   // Voice mode
   voiceMode?: boolean;
   onVoiceModeToggle?: () => void;
+  /**
+   * Deja el campo escribible mientras el modo voz está escuchando, en vez de
+   * taparlo con el cronómetro de grabación.
+   *
+   * Solo tiene sentido cuando lo dictado NO se va escribiendo en el campo en
+   * vivo (el camino de `onTranscribeAudio`): si el transcriptor está tecleando
+   * ahí solo, una persona escribiendo encima pelea con él. Por eso lo decide
+   * el agente, que es quien sabe por qué camino va, y no este componente.
+   */
+  escribirDuranteVoz?: boolean;
+  /**
+   * Alguien empezó a teclear mientras el modo voz escuchaba: quiere escribir,
+   * no hablar. El agente apaga el modo voz y suelta el micrófono — sin mandar
+   * nada y sin borrar lo que ya lleva escrito.
+   */
+  onTypingDuringVoice?: () => void;
 
   // Model selector
   model: string;
@@ -382,6 +398,7 @@ export function InputBar({
   recording = false, recordSecs = 0,
   onStartRecording, onCancelRecording, onSendRecording,
   voiceMode = false, onVoiceModeToggle,
+  escribirDuranteVoz = false, onTypingDuringVoice,
   model, onModelChange,
   connectors = [], onFileSelected, onCloudOpen, onConnectorInsert, onNavigateConnectors,
   enablePublish = false,
@@ -601,8 +618,15 @@ export function InputBar({
               <div className="px-4 pt-3 pb-0 min-h-[52px] flex items-start">
                 <AnimatePresence mode="wait">
 
-                  {/* Recording mode */}
-                  {recording ? (
+                  {/* Recording mode.
+                      En modo voz con `escribirDuranteVoz` NO se tapa el campo:
+                      que te escuche no debería impedirte escribir. Quien dijo
+                      la palabra de activación tal vez solo quería abrir el
+                      campo, o se arrepintió de hablar a media frase — que ahí
+                      encuentre el cursor y no un cronómetro. Que está
+                      escuchando se sigue viendo: el lienzo animado abajo y el
+                      "Escuchando…" a la derecha. */}
+                  {recording && !(voiceMode && escribirDuranteVoz) ? (
                     <motion.div
                       key="recording"
                       initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 4 }}
@@ -643,7 +667,15 @@ export function InputBar({
                     >
                       <AutoTextarea
                         value={value}
-                        onChange={onChange}
+                        onChange={v => {
+                          // Teclear mientras escucha significa "mejor escribo":
+                          // se apaga el modo voz antes de aceptar la tecla, o
+                          // el turno se mandaría solo en cuanto el VAD detecte
+                          // el silencio de alguien que dejó de hablar porque
+                          // se puso a escribir.
+                          if (recording && voiceMode) onTypingDuringVoice?.();
+                          onChange(v);
+                        }}
                         onSubmit={onSend}
                         onFocus={onFocus}
                         onBlur={onBlur}

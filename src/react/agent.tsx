@@ -1123,6 +1123,19 @@ const Agente = forwardRef<HandeiaAgentHandle, HandeiaAgentProps>(function Agente
                       setVoiceMode(true)
                       empezarDictado()
                     },
+                    // El campo sigue escribible mientras escucha SOLO cuando lo
+                    // dictado no se va escribiendo ahí en vivo — o sea por el
+                    // camino de onTranscribeAudio. Con el reconocimiento nativo
+                    // el transcriptor teclea solo en el campo, y dejar escribir
+                    // encima sería pelearse con él.
+                    escribirDuranteVoz: !!props.onTranscribeAudio,
+                    onTypingDuringVoice: () => {
+                      // Quiere escribir: se suelta el micrófono y se apaga el
+                      // modo voz, pero NO se manda nada ni se borra lo escrito.
+                      pararDictado()
+                      voiceModeRef.current = false
+                      setVoiceMode(false)
+                    },
                     recording: grabando,
                     recordSecs: recSecs,
                     onStartRecording: empezarDictado,

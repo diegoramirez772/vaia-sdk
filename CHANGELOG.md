@@ -5,6 +5,41 @@ Este paquete sigue [SemVer](https://semver.org/lang/es/).
 
 ---
 
+## [0.13.0] — 2026-09-14
+
+### Añadido — se puede ESCRIBIR mientras el modo voz escucha
+
+Pedido de Nexus, que ya despierta el círculo con una palabra de activación
+("Gaia", detector propio del espacio): una vez que aparece el campo, quien
+lo invocó tal vez solo quería abrirlo, o se arrepintió de hablar a media
+frase. Hasta ahora no podía: mientras el modo voz escuchaba, el campo
+quedaba tapado por el cronómetro de grabación y no había dónde teclear.
+
+Dos props nuevos en `InputBar`, que `HandeiaAgent` ya conecta solo:
+
+```ts
+escribirDuranteVoz?: boolean      // deja el campo visible mientras escucha
+onTypingDuringVoice?: () => void  // alguien tecleó: apaga el modo voz
+```
+
+Comportamiento: con el modo voz escuchando, el campo sigue escribible y en
+cuanto llega la primera tecla se suelta el micrófono y se apaga el modo voz
+— **sin mandar nada y sin borrar lo que ya llevaba escrito**. Se apaga antes
+de aceptar la tecla a propósito: si no, el VAD leería el silencio de alguien
+que dejó de hablar *porque se puso a escribir* como "terminó su turno" y
+mandaría el turno solo. Que está escuchando se sigue viendo — el lienzo
+animado abajo y el "Escuchando…" a la derecha.
+
+Solo aplica por el camino de `onTranscribeAudio`. Con el reconocimiento
+nativo del navegador lo dictado se va escribiendo en el campo en vivo, así
+que dejar teclear encima sería pelearse con el transcriptor; ahí el
+cronómetro se queda como estaba. Lo decide el agente, que es quien sabe por
+qué camino va, no el componente.
+
+Retrocompatible: sin los props nuevos, todo se comporta igual que en 0.12.x.
+
+---
+
 ## [0.12.0] — 2026-09-14
 
 ### Añadido — `activarPorVoz` vía `ref`: activación por palabra de despertar
