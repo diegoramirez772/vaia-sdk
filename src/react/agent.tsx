@@ -46,6 +46,18 @@ const RUTA_TURNO = '/api/agent/space'
  */
 const CURSOR_COLOR = '#8b5cf6'
 
+/**
+ * Despedirse cierra el campo, sin gastar un turno.
+ *
+ * Ancla los dos extremos a propósito: solo cierra si la despedida ES el
+ * mensaje entero. "adiós" cierra; "adiós a las vacaciones, ¿qué tal si…" es
+ * una frase normal y se manda como cualquier otra. Esa diferencia importa más
+ * de lo que parece — cerrarle el campo a alguien a media pregunta por una
+ * coincidencia de palabra sería peor que no tener el atajo.
+ */
+const DESPEDIDAS =
+  /^(adi(o|ó)s|bye|goodbye|nos vemos|hasta luego|hasta pronto|hasta la próxima|hasta mañana|chao|chau|ya me voy|me voy|gracias,? (adi(o|ó)s|bye|nos vemos|hasta luego))[\s.!¡,]*$/i
+
 export interface HandeiaAgentProps {
   /** capability_id del espacio, el mismo del manifest. */
   capabilityId: string
@@ -822,14 +834,21 @@ const Agente = forwardRef<HandeiaAgentHandle, HandeiaAgentProps>(function Agente
   const enviarTexto = useCallback((texto: string, mostrar = true) => {
     const t = texto.trim()
     if (!t || fase === 'thinking') return
+    // Despedirse cierra, en los tres modos — y aquí, que es por donde pasan
+    // los dos caminos (lo dictado y lo tecleado), en vez de en cada uno.
+    // No se gasta un turno contra Handeia: "adiós" es una orden, no una
+    // pregunta, y esperar a que conteste para recién cerrar haría lenta la
+    // única acción que el usuario quiere instantánea.
+    if (DESPEDIDAS.test(t)) { cerrarCampo(); return }
     setTexto('')
     if (mostrar) setEnviado(t)
     setRespuesta(''); setPendiente(null); setFase('thinking')
     historial.current.push({ role: 'user', text: t })
     void turno(t)
-  }, [fase, turno])
+  }, [fase, turno, cerrarCampo])
 
   const enviar = useCallback(() => enviarTexto(texto), [texto, enviarTexto])
+
 
   // Termina tu turno de voz (mic suelto o modo voz, da igual quién lo
   // arrancó) y manda — un solo camino para los dos botones. Con
@@ -1130,11 +1149,18 @@ const Agente = forwardRef<HandeiaAgentHandle, HandeiaAgentProps>(function Agente
                     // encima sería pelearse con él.
                     escribirDuranteVoz: !!props.onTranscribeAudio,
                     onTypingDuringVoice: () => {
-                      // Quiere escribir: se suelta el micrófono y se apaga el
-                      // modo voz, pero NO se manda nada ni se borra lo escrito.
+                      // Se suelta el micrófono mientras teclea — si no, el VAD
+                      // leería el silencio de alguien que dejó de hablar
+                      // PORQUE se puso a escribir como "terminó su turno" y
+                      // mandaría el turno a medias.
+                      //
+                      // Pero el modo voz NO se apaga: escribir es este turno,
+                      // no una decisión para toda la conversación. Te subes al
+                      // elevador y ese turno lo escribes; al mandarlo, la
+                      // respuesta se dice en voz alta y vuelve a escuchar sola
+                      // (ver `reescuchar`), así que al bajar sigues hablando
+                      // sin tocar nada. Para salirse de verdad está la X.
                       pararDictado()
-                      voiceModeRef.current = false
-                      setVoiceMode(false)
                     },
                     recording: grabando,
                     recordSecs: recSecs,

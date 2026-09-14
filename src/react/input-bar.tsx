@@ -996,13 +996,20 @@ export function InputBar({
                       transition={{ duration: 0.1 }}
                       className="flex items-center gap-1"
                     >
-                      <button
-                        onClick={onStartRecording}
-                        aria-label="Dictar"
-                        className="w-8 h-8 shrink-0 rounded-full flex items-center justify-center text-black/70 dark:text-white/87 hover:text-black dark:hover:text-white hover:bg-black/[0.05] dark:hover:bg-white/[0.05] transition-colors"
-                      >
-                        <Mic className="w-[15px] h-[15px]" strokeWidth={1.7} />
-                      </button>
+                      {/* Dictar suelto — solo fuera del modo voz. Dentro del
+                          modo voz el micrófono ya se abre y se cierra solo en
+                          cada turno, así que este botón ofrecería una segunda
+                          forma de hacer lo mismo, peor: abriría un dictado
+                          encima del que ya escucha. */}
+                      {!voiceMode && (
+                        <button
+                          onClick={onStartRecording}
+                          aria-label="Dictar"
+                          className="w-8 h-8 shrink-0 rounded-full flex items-center justify-center text-black/70 dark:text-white/87 hover:text-black dark:hover:text-white hover:bg-black/[0.05] dark:hover:bg-white/[0.05] transition-colors"
+                        >
+                          <Mic className="w-[15px] h-[15px]" strokeWidth={1.7} />
+                        </button>
+                      )}
                       {onVoiceModeToggle && (
                         <button
                           onClick={onVoiceModeToggle}

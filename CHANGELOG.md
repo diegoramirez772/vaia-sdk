@@ -5,6 +5,42 @@ Este paquete sigue [SemVer](https://semver.org/lang/es/).
 
 ---
 
+## [0.14.0] — 2026-09-14
+
+### Cambiado — escribir ya no te saca del modo voz (corrige 0.13.0)
+
+0.13.0 entendió mal el pedido. Ahí, teclear apagaba el modo voz; la idea real
+es que **la conversación sigue viva y cada TURNO eliges** si hablas o
+escribes. El caso que lo explica, tal cual lo planteó Diego: le hablas a Gaia,
+te subes al elevador y ya no puedes hablar, así que ese turno lo escribes y te
+responde igual; bajas, y sigues hablando sin tocar nada.
+
+Ahora, al teclear con el modo voz encendido: se suelta el micrófono (para que
+el detector de silencio no interprete "dejó de hablar" como "terminó su turno"
+y mande el mensaje a medias) pero **el modo voz se queda encendido**. Al
+mandar el turno escrito, la respuesta se dice en voz alta y vuelve a escuchar
+sola. Para salir del modo voz de verdad sigue estando la X.
+
+### Cambiado — "Dictar" desaparece dentro del modo voz
+
+Dentro del modo voz el micrófono ya se abre y se cierra solo en cada turno, así
+que ese botón ofrecía una segunda forma de hacer lo mismo — y peor: abría un
+dictado encima del que ya estaba escuchando. Fuera del modo voz sigue igual.
+
+### Añadido — despedirse cierra el campo
+
+Decir o escribir "adiós", "bye", "nos vemos", "hasta luego", "chao"… cierra el
+agente, en los tres modos (voz, híbrido y escribir). No gasta un turno contra
+Handeia: es una orden, no una pregunta, y esperar la respuesta para recién
+cerrar haría lenta la única acción que se quiere instantánea.
+
+La despedida tiene que ser el mensaje **entero**. "adiós" cierra; "adiós a las
+vacaciones, ¿qué opinas?" se manda como cualquier otro mensaje — cerrarle el
+campo a alguien a media pregunta por una coincidencia de palabra sería peor que
+no tener el atajo.
+
+---
+
 ## [0.13.0] — 2026-09-14
 
 ### Añadido — se puede ESCRIBIR mientras el modo voz escucha
